@@ -292,7 +292,7 @@ addToggle("After completing an objective", -302, "refreshObjective", "After an o
 section(options, "New quests", -336)
 
 addToggle("Add new quests to the guide", -360, "autoTrack", "Add automatically", "A quest you accept is added to the guide.")
-addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "A newly accepted quest includes every follow-up. The quest tooltip can shorten that list.")
+addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "A newly accepted quest includes every follow-up. Add all uses the same choice. Expand a chain in the quest log to choose follow-ups.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -950,14 +950,32 @@ quests.title:SetText("Quests")
 quests.subtitle:SetText("Log")
 ns.quests = quests
 
+local addAll = CreateFrame("Button", nil, quests, "UIPanelButtonTemplate")
+addAll:SetSize(120, 22)
+addAll:SetPoint("TOPLEFT", 24, -44)
+addAll:SetText("Add all")
+bindTip(addAll, "Add all", "Puts every quest in the log into the guide. Follow-ups are included when Include the quest chain is on.")
+addAll:SetScript("OnClick", function()
+    if ns.SetAllQuests then ns.SetAllQuests(true) end
+end)
+
+local removeAll = CreateFrame("Button", nil, quests, "UIPanelButtonTemplate")
+removeAll:SetSize(120, 22)
+removeAll:SetPoint("LEFT", addAll, "RIGHT", 8, 0)
+removeAll:SetText("Remove all")
+bindTip(removeAll, "Remove all", "Takes every quest out of the guide, including its follow-ups.")
+removeAll:SetScript("OnClick", function()
+    if ns.SetAllQuests then ns.SetAllQuests(false) end
+end)
+
 local questHint = quests:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-questHint:SetPoint("TOPLEFT", 24, -46)
+questHint:SetPoint("TOPLEFT", 24, -72)
 questHint:SetPoint("RIGHT", quests, "RIGHT", -24, 0)
 questHint:SetJustifyH("LEFT")
 questHint:SetWordWrap(true)
 questHint:SetText("Check a quest to put it in the guide. Expand a chain to choose its follow-ups.")
 
-local questScroll = scroller(quests, "ClearTheLogQuestScroll", 16, -88, -34, 36)
+local questScroll = scroller(quests, "ClearTheLogQuestScroll", 16, -116, -34, 36)
 local questRows = {}
 local questHeaders = {}
 local questEmpty = questScroll.child:CreateFontString(nil, "ARTWORK", "GameFontDisable")
@@ -974,6 +992,13 @@ local ROW_CHAIN = 24
 local chainRows = {}
 local openChains = {}
 
+local function addArea(questId)
+    if not ns.ObjectiveZoneLabel then return end
+    local zone = ns.ObjectiveZoneLabel(questId)
+    if type(zone) ~= "string" or zone == "" or zone == "No zone" then return end
+    GameTooltip:AddLine("Area: " .. zone, 0.8, 0.85, 1, true)
+end
+
 local function showQuestTip(row, owner)
     if not row or not row.questId then return end
     GameTooltip:SetOwner(owner or row, "ANCHOR_RIGHT")
@@ -981,10 +1006,36 @@ local function showQuestTip(row, owner)
     if row.chainText then GameTooltip:AddLine(row.chainText, 1, 0.82, 0) end
     addQuestBody(row.questId, row.objectives)
     addContacts(row.questId)
+    addArea(row.questId)
     if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
     if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
     if row.chainText then
         GameTooltip:AddLine("Expand the chain to choose follow-ups.", 0.7, 0.7, 0.7, true)
+    end
+    GameTooltip:Show()
+end
+
+local function showChainTip(row, owner)
+    if not row or not row.memberId then return end
+    GameTooltip:SetOwner(owner or row, "ANCHOR_RIGHT")
+    GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
+    if type(row.level) == "number" and row.level > 0 then
+        GameTooltip:AddLine("Level " .. row.level, 1, 1, 1)
+    end
+    addQuestBody(row.memberId, questObjectives(row.memberId))
+    addContacts(row.memberId)
+    addArea(row.memberId)
+    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
+    if row.role == "followup" then
+        if row.included then
+            GameTooltip:AddLine("Uncheck to drop this quest and every quest after it.", 0.8, 0.8, 0.8, true)
+        else
+            GameTooltip:AddLine("Check to include every quest through this one.", 0.8, 0.8, 0.8, true)
+        end
+    elseif row.role == "current" then
+        GameTooltip:AddLine("This is the quest in your log.", 0.8, 0.8, 0.8, true)
+    else
+        GameTooltip:AddLine("Earlier in the chain.", 0.8, 0.8, 0.8, true)
     end
     GameTooltip:Show()
 end
@@ -1035,22 +1086,7 @@ local function chainMemberRow(parent)
         if ns.RequestRefresh then ns.RequestRefresh("manual") end
     end)
     row.check:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
-        if row.level then GameTooltip:AddLine("Level " .. row.level, 1, 1, 1) end
-        if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
-        if row.role == "followup" then
-            if row.included then
-                GameTooltip:AddLine("Uncheck to drop this quest and every quest after it.", 0.8, 0.8, 0.8, true)
-            else
-                GameTooltip:AddLine("Check to include every quest through this one.", 0.8, 0.8, 0.8, true)
-            end
-        elseif row.role == "current" then
-            GameTooltip:AddLine("This is the quest in your log.", 0.8, 0.8, 0.8, true)
-        else
-            GameTooltip:AddLine("Earlier in the chain.", 0.8, 0.8, 0.8, true)
-        end
-        GameTooltip:Show()
+        showChainTip(row, self)
     end)
     row.check:SetScript("OnLeave", hideQuestTip)
 

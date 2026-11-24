@@ -85,10 +85,49 @@ function ns.ChainEnabled(questId)
     return db.chain[questId] == true
 end
 
+-- enabled keeps every follow-up. Otherwise the chain stops on the log quest.
+function ns.SetChainFollowups(questId, enabled)
+    if type(questId) ~= "number" then return end
+    local db = ns.CharDB()
+    if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
+    db.decided[questId] = true
+    db.chainOff[questId] = nil
+    if enabled then
+        db.chain[questId] = true
+        db.chainThrough[questId] = nil
+        return
+    end
+    db.chain[questId] = false
+    local through = questId
+    if type(ns.ChainInfo) == "function" then
+        local chain = ns.ChainInfo(questId)
+        if chain and type(chain.ids) == "table" and chain.ids[chain.index] then
+            through = chain.ids[chain.index]
+        end
+    end
+    db.chainThrough[questId] = through
+end
+
 function ns.SetIncluded(questId, included)
     local db = ns.CharDB()
     db.tracked[questId] = included and true or false
     db.decided[questId] = true
+    if not included then ns.SetChainFollowups(questId, false) end
+end
+
+function ns.SetAllQuests(included)
+    local quests = ns.lastPlan and ns.lastPlan.quests
+    if type(quests) ~= "table" then return end
+    local on = included and true or false
+    local chainOn = ns.CharDB().autoChain == true
+    for _, quest in ipairs(quests) do
+        local id = type(quest) == "table" and quest.id or nil
+        if type(id) == "number" then
+            ns.SetIncluded(id, on)
+            if on then ns.SetChainFollowups(id, chainOn) end
+        end
+    end
+    if ns.RequestRefresh then ns.RequestRefresh("manual") end
 end
 
 function ns.SetChainEnabled(questId, enabled)
