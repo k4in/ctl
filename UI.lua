@@ -230,22 +230,22 @@ local function addRadio(text, value, y, tipTitle, tipBody)
     return radio
 end
 
-addRadio("Keins", "none", -70, "Kein Routing", "Der Guide zeigt die Schritte, setzt aber keinen Wegpunkt.")
-addRadio("TomTom", "tomtom", -96, "TomTom", "Wegpunkte für die nächsten 5 Schritte. Der Pfeil zeigt auf den ersten.")
-addRadio("Shortest Path Forever", "spf", -122, "Shortest Path Forever", "Die nächsten 5 Schritte werden als eine Reise geplant, inklusive Flug, Boot und Portal.")
+addRadio("None", "none", -70, "No routing", "The guide lists the steps and does not set a waypoint.")
+addRadio("TomTom", "tomtom", -96, "TomTom", "Waypoints for the next 5 steps. The arrow points at the first.")
+addRadio("Shortest Path Forever", "spf", -122, "Shortest Path Forever", "The next 5 steps are planned as one journey, including flight, boat, and portal.")
 
 local routerHint = options:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 routerHint:SetPoint("TOPLEFT", 28, -154)
 routerHint:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerHint:SetJustifyH("LEFT")
 routerHint:SetWordWrap(true)
-routerHint:SetText("TomTom und Shortest Path bekommen Wegpunkte für die nächsten 5 Schritte. Nur eins von beiden, oder keins.")
+routerHint:SetText("TomTom and Shortest Path get waypoints for the next 5 steps. One of them, or neither.")
 
 routerStatus:SetPoint("TOPLEFT", 28, -198)
 routerStatus:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerStatus:SetJustifyH("LEFT")
 
-section(options, "Route automatisch aktualisieren", -226)
+section(options, "Refresh the route automatically", -226)
 
 local optionBoxes = {}
 
@@ -278,24 +278,24 @@ local function addToggle(text, y, field, tipTitle, tipBody)
     return box
 end
 
-addToggle("Nach Annahme einer neuen Quest", -250, "refreshAccept", "Nach dem Annehmen", "Der Wegpunkt wird neu gesetzt, wenn du eine Quest annimmst.")
-addToggle("Nach Abgabe einer Quest", -276, "refreshTurnin", "Nach der Abgabe", "Der Wegpunkt wird neu gesetzt, wenn du eine Quest abgibst.")
-addToggle("Nach Erfüllen einer Questaufgabe", -302, "refreshObjective", "Nach einem Ziel", "Der Wegpunkt rückt vor, wenn ein Ziel fertig wird. Quests mit mehreren Zielen gehen Schritt für Schritt weiter.")
+addToggle("After accepting a quest", -250, "refreshAccept", "After accepting", "The waypoint is set again when you accept a quest.")
+addToggle("After turning in a quest", -276, "refreshTurnin", "After turning in", "The waypoint is set again when you turn in a quest.")
+addToggle("After completing an objective", -302, "refreshObjective", "After an objective", "The waypoint advances when an objective is finished. Quests with several objectives continue one step at a time.")
 
-section(options, "Neue Quests", -336)
+section(options, "New quests", -336)
 
-addToggle("Automatisch in den Guide aufnehmen", -360, "autoTrack", "Automatisch aufnehmen", "Eine Quest, die du neu annimmst, kommt sofort in den Guide.")
-addToggle("Questreihe automatisch berücksichtigen", -386, "autoChain", "Reihe automatisch", "Für eine neu angenommene Quest wird die Folgequest mitgeplant.")
+addToggle("Add new quests to the guide", -360, "autoTrack", "Add automatically", "A quest you accept is added to the guide.")
+addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "A newly accepted quest plans its follow-up as well.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
 guideButton:SetPoint("BOTTOMLEFT", 24, 18)
-guideButton:SetText("Guide anzeigen")
-bindTip(guideButton, "Guide", "Öffnet oder schließt das Route-Fenster. Gleicher Befehl: /ctl route.")
+guideButton:SetText("Show guide")
+bindTip(guideButton, "Guide", "Opens or closes the route window. Same command: /ctl route.")
 
 local function paintGuideButton()
     local shown = ns.guide and ns.guide:IsShown()
-    guideButton:SetText(shown and "Guide schließen" or "Guide anzeigen")
+    guideButton:SetText(shown and "Hide guide" or "Show guide")
 end
 
 guideButton:SetScript("OnClick", function()
@@ -316,9 +316,9 @@ function ns.PaintOptions()
     end
     local missing
     if router == "tomtom" and not ns.TomTomReady() then
-        missing = "TomTom ist nicht geladen."
+        missing = "TomTom is not loaded."
     elseif router == "spf" and not ns.SpfReady() then
-        missing = "Shortest Path Forever ist nicht geladen."
+        missing = "Shortest Path Forever is not loaded."
     end
     routerStatus:SetText(missing or "")
     if missing then
@@ -335,7 +335,7 @@ end
 local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 156, {
     minW = 380, minH = 320, sizeKey = "sizeGuide",
 })
-guide.title:SetText("Route")
+guide.title:SetText("Guide")
 guide.subtitle:SetText("/ctl route")
 ns.guide = guide
 
@@ -362,7 +362,7 @@ refreshButton:SetPoint("RIGHT", questsButton, "LEFT", -6, 0)
 refreshButton:SetScript("OnClick", function()
     if ns.RefreshPlan then ns.RefreshPlan() end
 end)
-bindTip(refreshButton, "Plan neu berechnen", "Berechnet die Schritte vom aktuellen Ort neu und setzt die Route.")
+bindTip(refreshButton, "Recalculate plan", "Rebuilds the steps from your current location and sets the route.")
 guide.subtitle:SetPoint("RIGHT", refreshButton, "LEFT", -8, 0)
 
 local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 68)
@@ -406,23 +406,30 @@ local function addQuestBody(questId, objectives)
         structured = false
     end
     if type(lines) ~= "table" or #lines == 0 then return end
-    GameTooltip:AddLine("Ziele", 1, 0.82, 0)
-    local shown = 0
+    GameTooltip:AddLine("Objectives", 1, 0.82, 0)
     for _, line in ipairs(lines) do
-        if shown >= 12 then
-            GameTooltip:AddLine("...", 0.7, 0.7, 0.7)
-            break
-        end
         local text = structured and line.text or line
         text = cleanTip(text)
         if text then
-            shown = shown + 1
             if structured and line.finished then
                 GameTooltip:AddLine(text, 0.55, 0.55, 0.55, true)
             else
                 GameTooltip:AddLine(text, 1, 1, 1, true)
             end
         end
+    end
+end
+
+local function addContacts(questId)
+    if not ns.QuestContacts or not ns.ContactText then return end
+    local giver, turnin = ns.QuestContacts(questId)
+    local giverText = ns.ContactText(giver)
+    local turninText = ns.ContactText(turnin)
+    if giverText then
+        GameTooltip:AddLine("Quest giver: " .. giverText, 0.75, 0.9, 1, true)
+    end
+    if turninText then
+        GameTooltip:AddLine("Turn in: " .. turninText, 0.7, 1, 0.75, true)
     end
 end
 
@@ -440,16 +447,31 @@ local function questObjectives(questId, stored)
 end
 
 local function addFollowups(questId)
-    GameTooltip:AddLine("Folgequests", 1, 0.82, 0)
+    GameTooltip:AddLine("Follow-ups", 1, 0.82, 0)
     local briefs = ns.FollowupBriefs and ns.FollowupBriefs(questId) or {}
     if #briefs == 0 then
-        GameTooltip:AddLine("Keine Folgequests.", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("No follow-ups.", 0.7, 0.7, 0.7)
         return
     end
     for _, brief in ipairs(briefs) do
         local name = brief.name or "Quest"
-        local zone = brief.zone or "Ohne Gebiet"
+        local zone = brief.zone or "No zone"
         GameTooltip:AddLine(name .. " — " .. zone, 0.85, 0.85, 0.85, true)
+    end
+end
+
+local function paintSkipIcon(button, undo)
+    local base = undo and "Interface\\Buttons\\UI-SpellbookIcon-PrevPage"
+        or "Interface\\Buttons\\UI-SpellbookIcon-NextPage"
+    button:SetNormalTexture(base .. "-Up")
+    button:SetPushedTexture(base .. "-Down")
+    button:SetDisabledTexture(base .. "-Disabled")
+end
+
+local function hideDetails(row)
+    if row.header then row.header:Hide() end
+    if row.details then
+        for _, line in ipairs(row.details) do line:Hide() end
     end
 end
 
@@ -475,12 +497,23 @@ local function stepRow(parent)
     row.hover:SetColorTexture(1, 1, 1, 0.05)
     row.hover:Hide()
 
-    row.action = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    row.action:SetSize(118, 20)
-    row.action:SetPoint("RIGHT", -4, 0)
+    row.action = CreateFrame("Button", nil, row)
+    row.action:SetSize(22, 22)
+    row.action:SetPoint("RIGHT", -8, 0)
+    row.action:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row.action:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    paintSkipIcon(row.action, false)
     row.action:Hide()
-    row.action:SetScript("OnClick", function()
+    row.action:SetScript("OnClick", function(_, mouseButton)
         if silent or not row.index or not row.stop then return end
+        if mouseButton == "LeftButton" and IsShiftKeyDown and IsShiftKeyDown() then
+            if ns.RecalculateFromStep then ns.RecalculateFromStep(row.index) end
+            return
+        end
+        if mouseButton == "RightButton" then
+            if ns.SkipStep then ns.SkipStep(row.index) end
+            return
+        end
         if row.stop.skipped then
             if ns.UndoSkip then ns.UndoSkip(row.index) end
         elseif ns.SkipStep then
@@ -490,41 +523,57 @@ local function stepRow(parent)
     row.action:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if row.stop and row.stop.skipped then
-            GameTooltip:SetText("Rückgängig", 1, 0.82, 0)
-            GameTooltip:AddLine("Nimmt das Überspringen zurück und berechnet den Plan vom aktuellen Ort neu.", 1, 1, 1, true)
+            GameTooltip:SetText("Undo", 1, 0.82, 0)
+            GameTooltip:AddLine("Clears the skip and recalculates the plan from your current location.", 1, 1, 1, true)
         else
-            GameTooltip:SetText("Überspringen", 1, 0.82, 0)
-            GameTooltip:AddLine("Setzt diesen Schritt ans Ende des Plans.", 1, 1, 1, true)
+            GameTooltip:SetText("Skip", 1, 0.82, 0)
+            GameTooltip:AddLine("Moves this step to the end of the plan.", 1, 1, 1, true)
         end
         GameTooltip:Show()
     end)
     row.action:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    row.header = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    row.header:SetPoint("TOPLEFT", 12, -8)
+    row.header:SetText("CURRENT STEP")
+    row.header:Hide()
+
     row.line = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    row.line:SetPoint("TOPLEFT", 8, -4)
-    row.line:SetPoint("RIGHT", row, "RIGHT", -128, 0)
+    row.line:SetPoint("TOPLEFT", 10, -4)
+    row.line:SetPoint("RIGHT", row, "RIGHT", -8, 0)
     clip(row.line)
 
     row.sub = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.sub:SetPoint("TOPLEFT", row.line, "BOTTOMLEFT", 16, -2)
-    row.sub:SetPoint("RIGHT", row, "RIGHT", -128, 0)
+    row.sub:SetPoint("TOPLEFT", 22, -22)
+    row.sub:SetPoint("RIGHT", row, "RIGHT", -8, 0)
     clip(row.sub)
+
+    row.details = {}
+    for index = 1, 6 do
+        local line = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        line:SetJustifyH("LEFT")
+        line:SetWordWrap(false)
+        if line.SetMaxLines then line:SetMaxLines(1) end
+        line:Hide()
+        row.details[index] = line
+    end
 
     row:SetScript("OnEnter", function()
         row.hover:Show()
         if not row.stop then return end
         local stop = row.stop
         GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-        GameTooltip:SetText(stop.questName or "Schritt", 1, 0.82, 0)
+        GameTooltip:SetText(stop.questName or "Step", 1, 0.82, 0)
         if stop.text then GameTooltip:AddLine(cleanTip(stop.text), 1, 1, 1, true) end
         if stop.note and stop.note ~= "" then GameTooltip:AddLine(stop.note, 0.8, 0.8, 0.8, true) end
-        if stop.dungeon then GameTooltip:AddLine("Dungeon", 1, 0.82, 0) end
+        if stop.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
         addQuestBody(stop.questId, questObjectives(stop.questId))
+        addContacts(stop.questId)
         addFollowups(stop.questId)
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Linksklick öffnet die Quest im Questlog.", 0.7, 0.7, 0.7, true)
-        GameTooltip:AddLine("Drücke Shift+Links, um den Guide mit diesem Schritt als Startpunkt neu zu berechnen.", 0.7, 0.7, 0.7, true)
-        GameTooltip:AddLine("Drücke Rechts, um diesen Schritt zu überspringen.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Left click opens the quest in the quest log.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Shift+Left click recalculates the guide with this step as the start.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("Right click skips this step.", 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function()
@@ -547,122 +596,207 @@ local function stepRow(parent)
     return row
 end
 
-local function placeRows(scroll, rows, count, factory, height)
-    for index = #rows + 1, count do
-        rows[index] = factory(scroll.child)
+local function ensureStepRow(index)
+    local row = stepRows[index]
+    if not row then
+        row = stepRow(stepScroll.child)
+        stepRows[index] = row
     end
-    for index = 1, count do
-        local row = rows[index]
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", scroll.child, "TOPLEFT", 0, -((index - 1) * height))
-        row:SetPoint("TOPRIGHT", scroll.child, "TOPRIGHT", 0, -((index - 1) * height))
-        row:Show()
-    end
-    for index = count + 1, #rows do rows[index]:Hide() end
-    fit(scroll, math.max(count * height, 1))
+    return row
 end
 
-local function coordText(stop)
-    if type(stop.x) ~= "number" or type(stop.y) ~= "number" then return nil end
-    return string.format("%.0f, %.0f", stop.x, stop.y)
+local function locationText(areaId, x, y)
+    local zone, subzone
+    if ns.ZonePair then
+        zone, subzone = ns.ZonePair(areaId)
+    elseif ns.ZoneName and type(areaId) == "number" and areaId > 0 then
+        zone = ns.ZoneName(areaId)
+        if zone == "No zone" then zone = nil end
+    end
+    local place = zone
+    if type(subzone) == "string" and subzone ~= "" then
+        place = place and (place .. ", " .. subzone) or subzone
+    end
+    local coord
+    if type(x) == "number" and type(y) == "number" then
+        coord = string.format("%.0f, %.0f", x, y)
+    end
+    if place and coord then return place .. " (" .. coord .. ")" end
+    return place or coord
+end
+
+local function anchorLine(row, top, inset, large)
+    row.line:ClearAllPoints()
+    row.line:SetPoint("TOPLEFT", 12, top)
+    row.line:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
+    local font = GameFontHighlight
+    if large and GameFontNormalLarge then font = GameFontNormalLarge end
+    if font then row.line:SetFontObject(font) end
+    row.line:SetWordWrap(large and true or false)
+    if row.line.SetMaxLines then row.line:SetMaxLines(large and 2 or 1) end
+end
+
+local function currentDetails(stop)
+    local lines = {}
+    local function add(text, r, g, b)
+        if type(text) == "string" and text ~= "" then
+            lines[#lines + 1] = { text = text, r = r, g = g, b = b }
+        end
+    end
+    if stop.kind == "objective" and ns.ProgressLabel then
+        add(ns.ProgressLabel(stop), 1, 0.9, 0.55)
+    end
+    add(locationText(stop.areaId, stop.x, stop.y), 0.9, 0.9, 0.9)
+    if ns.QuestContacts and ns.ContactText then
+        local giver, turnin = ns.QuestContacts(stop.questId)
+        local giverText = ns.ContactText(giver)
+        local turninText = ns.ContactText(turnin)
+        if giverText then add("Quest giver: " .. giverText, 0.75, 0.9, 1) end
+        if turninText then add("Turn in: " .. turninText, 0.7, 1, 0.75) end
+    end
+    local meta = {}
+    if stop.questName and stop.questName ~= "" then meta[#meta + 1] = stop.questName end
+    if stop.note and stop.note ~= "" then meta[#meta + 1] = stop.note end
+    if stop.dungeon then meta[#meta + 1] = "Dungeon Quest" end
+    if stop.skipped then meta[#meta + 1] = "skipped" end
+    if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
+        meta[#meta + 1] = "no map"
+    end
+    add(table.concat(meta, "   ·   "), 0.7, 0.7, 0.7)
+    return lines
+end
+
+local function showCurrent(row, lines, inset)
+    row.header:Show()
+    row.sub:Hide()
+    local top = -78
+    local shown = 0
+    for index, line in ipairs(lines) do
+        if index > #row.details then break end
+        local widget = row.details[index]
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPLEFT", 24, top)
+        widget:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
+        widget:SetText(line.text)
+        widget:SetTextColor(line.r, line.g, line.b)
+        widget:Show()
+        top = top - 16
+        shown = shown + 1
+    end
+    for index = shown + 1, #row.details do row.details[index]:Hide() end
+    return math.max(124, 86 + shown * 16)
 end
 
 local function fillSteps(steps)
     local list = steps or {}
     local indexes = ns.VisibleStepIndexes and ns.VisibleStepIndexes(list) or {}
-    if #list == 0 or #indexes == 0 then
-        placeRows(stepScroll, stepRows, 1, stepRow, ROW_STEP)
-        local row = stepRows[1]
-        row.index = nil
-        row.stop = nil
-        row.current:Hide()
-        row.edge:Hide()
-        row.action:Hide()
-        row.line:SetText("Keine Schritte. Der Log ist leer, oder keine Quest ist im Guide.")
-        row.line:SetTextColor(0.7, 0.7, 0.7)
-        row.sub:SetText("")
-        row.sub:SetTextColor(0.7, 0.7, 0.7)
-        return 0
-    end
-
-    local current = indexes[1]
-    placeRows(stepScroll, stepRows, #indexes, stepRow, ROW_STEP)
-    for rowIndex, index in ipairs(indexes) do
-        local stop = list[index]
-        local row = stepRows[rowIndex]
-        local here = index == current
-        row.index = index
+    local count = (#list == 0 or #indexes == 0) and 1 or #indexes
+    local y = 0
+    for rowIndex = 1, count do
+        local row = ensureStepRow(rowIndex)
+        local index = indexes[rowIndex]
+        local stop = index and list[index]
+        local here = stop and index == indexes[1]
+        local showIcon = stop and (here or stop.skipped) or false
+        local inset = showIcon and 36 or 10
+        row.index = stop and index or nil
         row.stop = stop
         row.hover:Hide()
-        row.current:SetShown(here)
-        row.edge:SetShown(here)
-        if stop.skipped then
-            row.action:SetText("Rückgängig")
-            row.action:Show()
-        elseif here then
-            row.action:SetText("Überspringen")
+        row.current:SetShown(here and true or false)
+        row.edge:SetShown(here and true or false)
+        row.action:ClearAllPoints()
+        if here then
+            row.action:SetPoint("TOPRIGHT", -8, -28)
+        else
+            row.action:SetPoint("RIGHT", -8, 0)
+        end
+        if showIcon then
+            paintSkipIcon(row.action, stop.skipped and true or false)
             row.action:Show()
         else
             row.action:Hide()
         end
-        local tag = stop.kind == "turnin" and "Abgabe" or "Ziel"
-        if stop.followup then tag = tag .. " · Folgequest" end
-        local mark = stop.dungeon and "|cffffcc00D|r  " or ""
-        row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
-        if stop.skipped then
-            row.line:SetTextColor(0.55, 0.55, 0.55)
+
+        local height = ROW_STEP
+        if not stop then
+            hideDetails(row)
+            row.sub:Show()
+            row.sub:SetText("")
+            anchorLine(row, -12, 10, false)
+            row.line:SetText("No steps. The log is empty, or no quest is in the guide.")
+            row.line:SetTextColor(0.7, 0.7, 0.7)
         elseif here then
+            anchorLine(row, -28, inset, true)
+            local tag = stop.kind == "turnin" and "Turn in" or "Objective"
+            if stop.followup then tag = tag .. " · Follow-up" end
+            local mark = stop.dungeon and "|cffffcc00D|r  " or ""
+            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
             row.line:SetTextColor(1, 0.86, 0.35)
-        elseif stop.followup then
-            row.line:SetTextColor(0.95, 0.8, 0.45)
-        elseif stop.kind == "turnin" then
-            row.line:SetTextColor(0.55, 1, 0.65)
+            height = showCurrent(row, currentDetails(stop), inset)
         else
-            row.line:SetTextColor(1, 1, 1)
+            hideDetails(row)
+            row.sub:Show()
+            anchorLine(row, -4, inset, false)
+            local tag = stop.kind == "turnin" and "Turn in" or "Objective"
+            if stop.followup then tag = tag .. " · Follow-up" end
+            local mark = stop.dungeon and "|cffffcc00D|r  " or ""
+            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
+            if stop.skipped then
+                row.line:SetTextColor(0.55, 0.55, 0.55)
+            elseif stop.followup then
+                row.line:SetTextColor(0.95, 0.8, 0.45)
+            elseif stop.kind == "turnin" then
+                row.line:SetTextColor(0.55, 1, 0.65)
+            else
+                row.line:SetTextColor(1, 1, 1)
+            end
+            local bits = {}
+            local place = locationText(stop.areaId, stop.x, stop.y)
+            if place then bits[#bits + 1] = place end
+            if stop.questName and stop.questName ~= "" then bits[#bits + 1] = stop.questName end
+            if stop.note and stop.note ~= "" then bits[#bits + 1] = stop.note end
+            if stop.skipped then bits[#bits + 1] = "skipped" end
+            if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
+                bits[#bits + 1] = "no map"
+            end
+            row.sub:ClearAllPoints()
+            row.sub:SetPoint("TOPLEFT", 24, -22)
+            row.sub:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
+            row.sub:SetText(table.concat(bits, "   ·   "))
+            if stop.skipped then
+                row.sub:SetTextColor(0.45, 0.45, 0.45)
+            else
+                row.sub:SetTextColor(0.65, 0.65, 0.65)
+            end
         end
 
-        local bits = {}
-        if here and stop.kind == "objective" and ns.ProgressLabel then
-            local progress = ns.ProgressLabel(stop)
-            if progress then bits[#bits + 1] = progress end
-        end
-        local place = ns.ZoneName and ns.ZoneName(stop.areaId) or nil
-        if place and place ~= "" then bits[#bits + 1] = place end
-        local coord = coordText(stop)
-        if coord then bits[#bits + 1] = coord end
-        if stop.questName and stop.questName ~= "" then bits[#bits + 1] = stop.questName end
-        if stop.note and stop.note ~= "" then bits[#bits + 1] = stop.note end
-        if stop.skipped then bits[#bits + 1] = "übersprungen" end
-        if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
-            bits[#bits + 1] = "ohne Karte"
-        end
-        row.sub:SetText(table.concat(bits, "   ·   "))
-        if here then
-            row.sub:SetTextColor(1, 0.9, 0.6)
-        elseif stop.skipped then
-            row.sub:SetTextColor(0.45, 0.45, 0.45)
-        else
-            row.sub:SetTextColor(0.65, 0.65, 0.65)
-        end
+        row:ClearAllPoints()
+        row:SetHeight(height)
+        row:SetPoint("TOPLEFT", stepScroll.child, "TOPLEFT", 0, -y)
+        row:SetPoint("TOPRIGHT", stepScroll.child, "TOPRIGHT", 0, -y)
+        row:Show()
+        y = y + height
     end
+    for index = count + 1, #stepRows do stepRows[index]:Hide() end
+    fit(stepScroll, math.max(y, 1))
     return #indexes
 end
 
 local function routeSentence()
     local db = ns.ready and ns.CharDB() or {}
     if not db.router then
-        return "Kein Routing. Unter /ctl TomTom oder Shortest Path wählen.", false
+        return "No routing. Choose TomTom or Shortest Path under /ctl.", false
     end
     if ns.routeStatus and ns.routeStatus ~= "" then
         return ns.routeStatus, ns.routeStatusError and true or false
     end
     if db.router == "tomtom" and not ns.TomTomReady() then
-        return "TomTom ist nicht geladen.", true
+        return "TomTom is not loaded.", true
     end
     if db.router == "spf" and not ns.SpfReady() then
-        return "Shortest Path Forever ist nicht geladen.", true
+        return "Shortest Path Forever is not loaded.", true
     end
-    return "Die Route wird beim nächsten Anlass gesetzt.", false
+    return "The route is set on the next refresh.", false
 end
 
 function ns.RenderGuide(plan, err)
@@ -681,7 +815,7 @@ function ns.RenderGuide(plan, err)
         if quest.included then included = included + 1 end
     end
     summary:SetText(string.format(
-        "%d von %d Schritten · %d von %d Quests im Guide",
+        "%d of %d steps · %d of %d quests in the guide",
         shown, #(plan.steps or {}), included, #(plan.quests or {})
     ))
     local text, bad = routeSentence()
@@ -718,7 +852,7 @@ questHint:SetPoint("TOPLEFT", 24, -46)
 questHint:SetPoint("RIGHT", quests, "RIGHT", -24, 0)
 questHint:SetJustifyH("LEFT")
 questHint:SetWordWrap(true)
-questHint:SetText("Haken links: die Quest steht im Guide. Reihe plant die Folgequest mit und erscheint nur bei einer aktiven Quest.")
+questHint:SetText("Left check: the quest is in the guide. Chain plans the follow-up and only shows on an active quest.")
 
 local questScroll = scroller(quests, "ClearTheLogQuestScroll", 16, -78, -34, 36)
 local questRows = {}
@@ -755,9 +889,9 @@ local function questRow(parent)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
         addQuestBody(row.questId, row.objectives)
-        if row.known == false then GameTooltip:AddLine("Nicht in QuestieDB.", 0.8, 0.8, 0.8) end
-        if row.dungeon then GameTooltip:AddLine("Dungeon", 1, 0.82, 0) end
-        GameTooltip:AddLine("Im Guide führen.", 1, 0.82, 0)
+        addContacts(row.questId)
+        if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
+        if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
         GameTooltip:Show()
     end)
     row.check:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -767,7 +901,7 @@ local function questRow(parent)
     styleCheck(row.chain)
     row.chainLabel = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     row.chainLabel:SetPoint("RIGHT", -4, 0)
-    row.chainLabel:SetText("Reihe")
+    row.chainLabel:SetText("Chain")
     row.chain:SetPoint("RIGHT", row.chainLabel, "LEFT", -2, 0)
     row.chain:SetScript("OnClick", function(self)
         if silent or not row.questId or not row.hasChain then return end
@@ -778,10 +912,11 @@ local function questRow(parent)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
         addQuestBody(row.questId, row.objectives)
+        addContacts(row.questId)
         if row.hasChain then
-            GameTooltip:AddLine("Reihe: die Folgequest wird mitgeplant, auch wenn sie noch nicht im Log ist.", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Chain: the follow-up is planned even when it is not in your log yet.", 1, 0.82, 0, true)
         else
-            GameTooltip:AddLine("Für diese Quest ist keine Folgequest bekannt.", 0.8, 0.8, 0.8, true)
+            GameTooltip:AddLine("No follow-up is known for this quest.", 0.8, 0.8, 0.8, true)
         end
         GameTooltip:Show()
     end)
@@ -809,8 +944,8 @@ end
 local function grouped(quests)
     local order, buckets = {}, {}
     for _, quest in ipairs(quests or {}) do
-        local zone = quest.zone or "Ohne Gebiet"
-        if zone == "" then zone = "Ohne Gebiet" end
+        local zone = quest.zone or "No zone"
+        if zone == "" then zone = "No zone" end
         if not buckets[zone] then
             buckets[zone] = {}
             order[#order + 1] = zone
@@ -820,8 +955,8 @@ local function grouped(quests)
     end
     table.sort(order, function(a, b)
         if a == b then return false end
-        if a == "Ohne Gebiet" then return false end
-        if b == "Ohne Gebiet" then return true end
+        if a == "No zone" then return false end
+        if b == "No zone" then return true end
         return a < b
     end)
     local groups = {}
@@ -844,7 +979,7 @@ local function fillQuests(plan)
     local child = questScroll.child
 
     if #list == 0 then
-        questEmpty:SetText(plan and "Keine Quests im Log." or (ns.lastErr or ""))
+        questEmpty:SetText(plan and "No quests in the log." or (ns.lastErr or ""))
         questEmpty:Show()
         y = 24
     else
@@ -914,7 +1049,7 @@ local function fillQuests(plan)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", -4, 0)
             end
             local level = (quest.level and quest.level > 0) and ("[" .. quest.level .. "] ") or ""
-            local done = quest.complete and "|cff40ff40fertig|r  " or ""
+            local done = quest.complete and "|cff40ff40done|r  " or ""
             local mark = quest.dungeon and "|cffffcc00D|r  " or ""
             row.name:SetText(done .. mark .. level .. (quest.name or "Quest"))
             row.name:SetAlpha(quest.included and 1 or 0.45)
@@ -932,7 +1067,7 @@ local function fillQuests(plan)
         if quest.included then included = included + 1 end
     end
     if plan then
-        questStatus:SetText(string.format("%d von %d Quests im Guide", included, #list))
+        questStatus:SetText(string.format("%d of %d quests in the guide", included, #list))
     else
         questStatus:SetText("")
     end
@@ -955,7 +1090,7 @@ end
 questsButton:SetScript("OnClick", function()
     if quests:IsShown() then quests:Hide() else quests:Show() end
 end)
-bindTip(questsButton, "Quests", "Wählt, welche Quests im Guide stehen und wo die Reihe mitgeplant wird.")
+bindTip(questsButton, "Quests", "Chooses which quests are in the guide and where the chain is planned.")
 
 function ns.ToggleQuests()
     if quests:IsShown() then quests:Hide() else quests:Show() end
@@ -968,4 +1103,84 @@ end
 
 function ns.ToggleOptions()
     if options:IsShown() then options:Hide() else options:Show() end
+end
+
+local minimapButton
+local minimapMoved = false
+
+function ns.PlaceMinimap()
+    if not minimapButton or not Minimap then return end
+    local angle = 225
+    if ns.ready then
+        local saved = ns.CharDB().minimapAngle
+        if type(saved) == "number" then angle = saved end
+    end
+    local radius = (Minimap:GetWidth() / 2) + 8
+    local rad = math.rad(angle)
+    minimapButton:ClearAllPoints()
+    minimapButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(rad) * radius, math.sin(rad) * radius)
+end
+
+if Minimap then
+    minimapButton = CreateFrame("Button", "ClearTheLogMinimapButton", Minimap)
+    minimapButton:SetSize(31, 31)
+    minimapButton:SetFrameStrata("MEDIUM")
+    minimapButton:SetFrameLevel(8)
+    minimapButton:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    minimapButton:RegisterForClicks("LeftButtonUp")
+    minimapButton:RegisterForDrag("LeftButton")
+
+    local overlay = minimapButton:CreateTexture(nil, "OVERLAY")
+    overlay:SetSize(53, 53)
+    overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    overlay:SetPoint("TOPLEFT")
+
+    local background = minimapButton:CreateTexture(nil, "BACKGROUND")
+    background:SetSize(20, 20)
+    background:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    background:SetPoint("CENTER")
+
+    local icon = minimapButton:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(17, 17)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Map_01")
+    icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
+    icon:SetPoint("CENTER")
+
+    minimapButton:SetScript("OnDragStart", function(self)
+        minimapMoved = true
+        self:SetScript("OnUpdate", function()
+            if not ns.ready or not Minimap then return end
+            local mx, my = Minimap:GetCenter()
+            local px, py = GetCursorPosition()
+            local scale = Minimap:GetEffectiveScale()
+            px, py = px / scale, py / scale
+            ns.CharDB().minimapAngle = math.deg(math.atan2(py - my, px - mx))
+            ns.PlaceMinimap()
+        end)
+    end)
+    minimapButton:SetScript("OnDragStop", function(self)
+        self:SetScript("OnUpdate", nil)
+    end)
+    minimapButton:SetScript("OnClick", function(_, button)
+        if minimapMoved then
+            minimapMoved = false
+            return
+        end
+        if button ~= "LeftButton" then return end
+        if IsShiftKeyDown and IsShiftKeyDown() then
+            if ns.ToggleOptions then ns.ToggleOptions() end
+        elseif ns.ToggleGuide then
+            ns.ToggleGuide()
+        end
+    end)
+    minimapButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Clear the Log", 1, 0.82, 0)
+        GameTooltip:AddLine("Left click: open the guide.", 1, 1, 1, true)
+        GameTooltip:AddLine("Shift+Left click: open options.", 1, 1, 1, true)
+        GameTooltip:AddLine("Drag to move.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    minimapButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    ns.PlaceMinimap()
 end

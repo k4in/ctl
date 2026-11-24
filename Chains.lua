@@ -89,8 +89,8 @@ end
 
 function ns.ChainLabel(chain)
     if not chain then return nil end
-    local label = string.format("Reihe %d/%d", chain.index, chain.total)
-    if chain.branched then label = label .. " · Verzweigung" end
+    local label = string.format("Chain %d/%d", chain.index, chain.total)
+    if chain.branched then label = label .. " · Branch" end
     return label
 end
 
@@ -103,7 +103,7 @@ function ns.FollowupBriefs(questId)
         if #briefs >= 6 then return false end
         if type(id) ~= "number" or seen[id] or not ns.QuestExists(id) then return false end
         seen[id] = true
-        local zone = "Ohne Gebiet"
+        local zone = "No zone"
         if ns.ObjectiveZoneLabel then
             local label = ns.ObjectiveZoneLabel(id)
             if type(label) == "string" and label ~= "" then zone = label end

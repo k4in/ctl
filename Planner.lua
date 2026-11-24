@@ -90,12 +90,12 @@ local function fallbackStops(row)
             end
         end
     end
-    local note = row.secret and "Zieldaten gerade nicht lesbar" or "keine Questie-Daten"
+    local note = row.secret and "Objective data is unreadable right now" or "no Questie data"
     stops[#stops + 1] = {
         questId = row.id,
         questName = name,
         kind = "turnin",
-        text = row.complete and "Fertig, abgeben" or "Abgeben",
+        text = row.complete and "Ready to turn in" or "Turn in",
         areaId = 0,
         note = note,
         dungeon = dungeon or nil,
@@ -137,9 +137,9 @@ local function attachFollowup(turnin, followStops, nextName)
     turnin.nextName = nextName
     if not nextName then return end
     if areaId then
-        turnin.note = "Danach: " .. nextName .. " in " .. ns.ZoneName(areaId)
+        turnin.note = "Next: " .. nextName .. " in " .. ns.ZoneName(areaId)
     else
-        turnin.note = "Danach: " .. nextName
+        turnin.note = "Next: " .. nextName
     end
 end
 
@@ -305,7 +305,7 @@ function ns.BuildPlan(rows, player)
             id = row.id,
             name = name,
             level = level,
-            zone = (type(zone) == "string" and zone ~= "") and zone or "Ohne Gebiet",
+            zone = (type(zone) == "string" and zone ~= "") and zone or "No zone",
             included = ns.IsIncluded(row.id),
             chainEnabled = ns.ChainEnabled(row.id),
             chain = chain,
@@ -350,7 +350,7 @@ function ns.BuildPlan(rows, player)
                     attachFollowup(turnin, followStops, followName)
                     countObjectives(followStops, objCount)
                     for _, stop in ipairs(followStops) do
-                        stop.note = stop.note or "noch nicht im Log"
+                        stop.note = stop.note or "not in the log yet"
                         stops[#stops + 1] = stop
                     end
                 end
@@ -366,10 +366,10 @@ function ns.BuildPlan(rows, player)
     end)
 
     local warning
-    if not dbReady then warning = ns.dbMessage or "QuestieDB ist nicht geladen." end
+    if not dbReady then warning = ns.dbMessage or "QuestieDB is not loaded." end
     for _, row in ipairs(rows) do
         if row.secret then
-            local suffix = "Ein Teil der Zieldaten ist gerade gesperrt."
+            local suffix = "Some objective data is unavailable right now."
             warning = warning and (warning .. " " .. suffix) or suffix
             break
         end

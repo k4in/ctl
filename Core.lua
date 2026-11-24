@@ -124,13 +124,13 @@ end
 local function readLog()
     local rows = {}
     if not C_QuestLog or not C_QuestLog.GetNumQuestLogEntries or not C_QuestLog.GetInfo then
-        return rows, "Questlog-API fehlt."
+        return rows, "Quest log API is missing."
     end
 
     local ok, count = pcall(C_QuestLog.GetNumQuestLogEntries)
     count = ok and ns.Plain(count) or nil
     if type(count) ~= "number" then
-        return nil, "Questlog ist gerade nicht lesbar."
+        return nil, "The quest log cannot be read right now."
     end
 
     local zoneTitle
@@ -348,7 +348,7 @@ end
 function ns.OpenQuestLog(questId)
     if type(questId) ~= "number" or questId <= 0 then return end
     if InCombatLockdown and InCombatLockdown() then
-        ns.Say("Das Questlog lässt sich im Kampf nicht öffnen.")
+        ns.Say("The quest log cannot be opened in combat.")
         return
     end
     if C_QuestLog and type(C_QuestLog.SetSelectedQuest) == "function" then
@@ -463,6 +463,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "ADDON_LOADED" and arg1 == addonName then
         ns.ready = true
         ns.CharDB()
+        if ns.PlaceMinimap then ns.PlaceMinimap() end
     elseif event == "PLAYER_LOGIN" then
         ns.OpenDatabase()
         ns.RequestRefresh("login")
@@ -496,7 +497,7 @@ SLASH_CLEARTHELOG1 = "/ctl"
 SLASH_CLEARTHELOG2 = "/clearthelog"
 SlashCmdList.CLEARTHELOG = function(message)
     if not ns.ready then
-        ns.Say("Noch nicht geladen.")
+        ns.Say("Not loaded yet.")
         return
     end
     local argument = (message or ""):match("^%s*(.-)%s*$")
@@ -511,7 +512,7 @@ SlashCmdList.CLEARTHELOG = function(message)
         db.ignored, db.selected, db.chainOff = {}, {}, {}
         db.legacyMode = nil
         db.mode = nil
-        ns.Say("Questauswahl zurückgesetzt. Quests im Log sind wieder im Guide.")
+        ns.Say("Quest selection reset. Quests in your log are in the guide again.")
         ns.RequestRefresh("manual")
         return
     end
@@ -519,5 +520,5 @@ SlashCmdList.CLEARTHELOG = function(message)
         if ns.ToggleOptions then ns.ToggleOptions() end
         return
     end
-    ns.Say("Befehle: /ctl, /ctl route, /ctl reset")
+    ns.Say("Commands: /ctl, /ctl route, /ctl reset")
 end

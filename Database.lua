@@ -3,6 +3,7 @@ local _, ns = ...
 local zoneNames = {}
 local uiMapToArea
 local areaToUi
+local subToParent
 
 local function compileMap(source)
     if type(source) == "table" then return source end
@@ -45,14 +46,14 @@ end
 function ns.OpenDatabase()
     if ns.dbOpen ~= nil then return ns.dbOpen end
     if type(LibQuestieDB) ~= "table" or type(QuestDB) ~= "table" or type(QuestDB.Exists) ~= "function" then
-        ns.dbMessage = "QuestieDB ist nicht geladen."
+        ns.dbMessage = "QuestieDB is not loaded."
         ns.dbOpen = false
         return false
     end
     if type(LibQuestieDB.RequireContract) == "function" then
         local ok, message = LibQuestieDB.RequireContract(1)
         if not ok then
-            ns.dbMessage = message or "QuestieDB-Vertrag passt nicht."
+            ns.dbMessage = message or "QuestieDB contract does not match."
             ns.dbOpen = false
             return false
         end
@@ -65,8 +66,10 @@ function ns.OpenDatabase()
         mergeMap(uiMapToArea, compileMap(private.uiMapIdToAreaIdOverride))
         areaToUi = compileMap(private.areaIdToUiMapId) or {}
         mergeMap(areaToUi, compileMap(private.areaIdToUiMapIdOverride))
+        subToParent = compileMap(private.subZoneToParentZone) or {}
+        mergeMap(subToParent, compileMap(private.subZoneToParentZoneOverride))
     else
-        uiMapToArea, areaToUi = {}, {}
+        uiMapToArea, areaToUi, subToParent = {}, {}, {}
     end
     loadDungeonAreas(private)
 
@@ -140,7 +143,7 @@ function ns.QuestName(questId)
 end
 
 function ns.ZoneName(areaId)
-    if type(areaId) ~= "number" or areaId == 0 then return "Ohne Gebiet" end
+    if type(areaId) ~= "number" or areaId == 0 then return "No zone" end
     local cached = zoneNames[areaId]
     if cached then return cached end
     local name
@@ -148,7 +151,7 @@ function ns.ZoneName(areaId)
         local ok, result = pcall(C_Map.GetAreaInfo, areaId)
         if ok then name = ns.Plain(result) end
     end
-    if type(name) ~= "string" or name == "" then name = "Gebiet " .. areaId end
+    if type(name) ~= "string" or name == "" then name = "Area " .. areaId end
     zoneNames[areaId] = name
     return name
 end
@@ -474,7 +477,7 @@ function ns.CollectStops(questId, spec)
                     local ids = entry[idIndex]
                     if type(ids) ~= "table" then ids = { ids } end
                     local point = bestOfIds(NpcDB, ids, player, prefer, 8)
-                    pushObjective(objectiveText(entry, textIndex, point and point.name or "Gegner"), point, point and point.name)
+                    pushObjective(objectiveText(entry, textIndex, point and point.name or "Enemy"), point, point and point.name)
                 end
             end
         end
@@ -484,7 +487,7 @@ function ns.CollectStops(questId, spec)
             for _, entry in ipairs(objectives[2]) do
                 if type(entry) == "table" then
                     local point = bestOfIds(ObjectDB, { entry[1] }, player, prefer, 4)
-                    pushObjective(objectiveText(entry, 2, point and point.name or "Objekt"), point, point and point.name)
+                    pushObjective(objectiveText(entry, 2, point and point.name or "Object"), point, point and point.name)
                 end
             end
         end
@@ -492,7 +495,7 @@ function ns.CollectStops(questId, spec)
             for _, entry in ipairs(objectives[3]) do
                 if type(entry) == "table" then
                     local point = itemPoint(entry[1], player, prefer)
-                    local text = objectiveText(entry, 2, point and point.name or "Gegenstand")
+                    local text = objectiveText(entry, 2, point and point.name or "Item")
                     pushObjective(text, point, point and point.name)
                 end
             end
@@ -502,14 +505,14 @@ function ns.CollectStops(questId, spec)
             for _, entry in ipairs(objectives[6]) do
                 if type(entry) == "table" then
                     local point = itemPoint(entry[3], player, prefer)
-                    pushObjective(objectiveText(entry, 2, "Zauberziel"), point, point and point.name)
+                    pushObjective(objectiveText(entry, 2, "Spell target"), point, point and point.name)
                 end
             end
         end
 
         local trigger = ns.QuestCall(questId, "triggerEnd")
         if type(trigger) == "table" then
-            local text = type(trigger[1]) == "string" and trigger[1] ~= "" and trigger[1] or "Gebiet betreten"
+            local text = type(trigger[1]) == "string" and trigger[1] ~= "" and trigger[1] or "Enter the area"
             pushObjective(text, bestPoint(trigger[2], player, prefer))
         end
 
@@ -522,7 +525,7 @@ function ns.CollectStops(questId, spec)
                 if type(entry) == "table" then
                     local text = type(entry[3]) == "string" and entry[3] ~= "" and entry[3] or nil
                     local point = bestPoint(entry[1], player, prefer)
-                    if text or point then pushObjective(text or "Weiteres Ziel", point) end
+                    if text or point then pushObjective(text or "Extra objective", point) end
                 end
             end
         end
@@ -579,17 +582,17 @@ function ns.CollectStops(questId, spec)
         end
     end
 
-    local turninText = "Abgeben"
+    local turninText = "Turn in"
     local point
     if ns.QuestExists(questId) then
         local finishedBy = ns.QuestCall(questId, "finishedBy") or {}
         point = bestOfIds(NpcDB, finishedBy[1], player, prefer, 8)
         local objectPoint = bestOfIds(ObjectDB, finishedBy[2], player, prefer, 6)
         if objectPoint and (not point or objectPoint.score < point.score) then point = objectPoint end
-        if point and point.name then turninText = "Bei " .. point.name .. " abgeben" end
+        if point and point.name then turninText = "Turn in to " .. point.name end
     end
     if spec.complete then
-        turninText = point and point.name and ("Fertig, bei " .. point.name .. " abgeben") or "Fertig, abgeben"
+        turninText = point and point.name and ("Ready to turn in to " .. point.name) or "Ready to turn in"
     end
 
     addStop(stops, {
@@ -607,25 +610,13 @@ function ns.CollectStops(questId, spec)
     return stops
 end
 
-local function shorten(text, limit)
+local function cleanText(text)
     if type(text) ~= "string" then return nil end
     text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
     text = text:gsub("%s+", " ")
     text = text:match("^%s*(.-)%s*$")
     if not text or text == "" then return nil end
-    if #text <= limit then return text end
-    local cut = limit - 3
-    while cut > 0 do
-        local byte = text:byte(cut)
-        if byte < 128 then break end
-        if byte >= 192 then
-            cut = cut - 1
-            break
-        end
-        cut = cut - 1
-    end
-    if cut < 1 then return "..." end
-    return text:sub(1, cut) .. "..."
+    return text
 end
 
 function ns.QuestBlurb(questId)
@@ -638,14 +629,14 @@ function ns.QuestBlurb(questId)
     if type(index) == "number" and index > 0 and type(GetQuestLogQuestText) == "function" then
         local ok, description = pcall(GetQuestLogQuestText, index)
         if ok then
-            local text = shorten(ns.Plain(description), 400)
+            local text = cleanText(ns.Plain(description))
             if text then return text end
         end
     end
     if C_QuestLog and type(C_QuestLog.GetQuestDescription) == "function" then
         local ok, description = pcall(C_QuestLog.GetQuestDescription, questId)
         if ok then
-            local text = shorten(ns.Plain(description), 400)
+            local text = cleanText(ns.Plain(description))
             if text then return text end
         end
     end
@@ -673,7 +664,7 @@ function ns.ObjectiveZoneLabel(questId)
             local name = ns.ZoneName(zone)
             if type(name) == "string" and name ~= "" then return name end
         end
-        return "Ohne Gebiet"
+        return "No zone"
     end
     if not ns.QuestExists(questId) then return fallback() end
     local ok, stops = pcall(ns.CollectStops, questId, {
@@ -727,4 +718,71 @@ function ns.ProgressLabel(stop)
     end
     if label == stop.text or label == displayWords(stop.text) then return nil end
     return label
+end
+
+function ns.ZonePair(areaId)
+    if type(areaId) ~= "number" or areaId <= 0 then return nil, nil end
+    local name = ns.ZoneName(areaId)
+    local parentId = subToParent and subToParent[areaId]
+    if type(parentId) == "number" and parentId > 0 and parentId ~= areaId then
+        local parent = ns.ZoneName(parentId)
+        if type(parent) == "string" and parent ~= "" and parent ~= name then
+            return parent, name
+        end
+    end
+    if name == "No zone" then return nil, nil end
+    return name, nil
+end
+
+function ns.ContactText(spot)
+    if type(spot) ~= "table" then return nil end
+    local zone, subzone = ns.ZonePair(spot.areaId)
+    local coord
+    if type(spot.x) == "number" and type(spot.y) == "number" then
+        coord = string.format("%.0f, %.0f", spot.x, spot.y)
+    end
+    local where = zone
+    if type(subzone) == "string" and subzone ~= "" then
+        where = where and (where .. ", " .. subzone) or subzone
+    end
+    local who = type(spot.name) == "string" and spot.name ~= "" and spot.name or nil
+    local text
+    if who and where then
+        text = who .. " — " .. where
+    else
+        text = who or where
+    end
+    if coord then
+        text = text and (text .. " (" .. coord .. ")") or coord
+    end
+    if not text or text == "" then return nil end
+    return text
+end
+
+local function idArray(value)
+    if type(value) == "number" and value > 0 then return { value } end
+    if type(value) ~= "table" then return nil end
+    return value
+end
+
+local function bestContact(npcIds, objectIds, itemIds, player, prefer)
+    local point = bestOfIds(NpcDB, idArray(npcIds), player, prefer, 8)
+    local objectPoint = bestOfIds(ObjectDB, idArray(objectIds), player, prefer, 6)
+    if objectPoint and (not point or objectPoint.score < point.score) then
+        point = objectPoint
+    end
+    if point then return point end
+    local items = idArray(itemIds)
+    local name = items and entityName(ItemDB, items[1])
+    if name then return { name = name, areaId = 0 } end
+    return nil
+end
+
+function ns.QuestContacts(questId, player)
+    if not ns.QuestExists(questId) then return nil, nil end
+    local prefer = preferZone(questId)
+    local started = ns.QuestCall(questId, "startedBy") or {}
+    local finished = ns.QuestCall(questId, "finishedBy") or {}
+    return bestContact(started[1], started[2], started[3], player, prefer),
+        bestContact(finished[1], finished[2], finished[3], player, prefer)
 end

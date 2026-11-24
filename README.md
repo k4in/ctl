@@ -1,4 +1,4 @@
 # Clear The Log
 
-Clear The Log plant eine kurze Reihenfolge für die Quests in deinem WoW-Forever-Log.
-Es liest Ziele, Abgaben und Questreihen aus QuestieDB und zeigt den Plan als Schrittliste.
+Clear The Log plans a short route for the quests in your WoW Forever log.
+It reads objectives, turn-ins, and quest chains from QuestieDB and shows the plan as a step list.

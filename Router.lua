@@ -50,7 +50,7 @@ local function stopTitle(stop)
     if stop.questName and stop.text and stop.questName ~= stop.text then
         return stop.questName .. ": " .. stop.text
     end
-    return stop.text or stop.questName or "Schritt"
+    return stop.text or stop.questName or "Step"
 end
 
 local function routeLimit()
@@ -181,15 +181,15 @@ local function pointSpf(mapped)
         ok, result, why = pcall(api.NavigateRoute, OWNER, payload)
     end
     if ok and result == true then return true, #payload end
-    if not ok then return false, 0, "Shortest Path hat die Route abgelehnt." end
+    if not ok then return false, 0, "Shortest Path rejected the route." end
     if type(why) == "string" and why ~= "" then return false, 0, why end
-    return false, 0, "Shortest Path hat die Route gerade nicht übernommen."
+    return false, 0, "Shortest Path did not accept the route."
 end
 
 local function noteSkipped(text, skipped)
     if skipped <= 0 then return text end
-    if skipped == 1 then return text .. " 1 Schritt hat keine Karte." end
-    return text .. " " .. skipped .. " Schritte haben keine Karte."
+    if skipped == 1 then return text .. " 1 step has no map." end
+    return text .. " " .. skipped .. " steps have no map."
 end
 
 function ns.PushRoute(plan, fromIndex, reasons)
@@ -222,7 +222,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
     if db.router == "tomtom" then
         clearSpf()
         if not ns.TomTomReady() then
-            ns.routeStatus = "TomTom ist nicht geladen."
+            ns.routeStatus = "TomTom is not loaded."
             ns.routeStatusError = true
             ns.lastRouteKey = nil
             ns.lastRouteRouter = nil
@@ -230,22 +230,22 @@ function ns.PushRoute(plan, fromIndex, reasons)
         end
         if #mapped == 0 then
             clearTomTom()
-            ns.routeStatus = "Kein Schritt mit Koordinaten."
+            ns.routeStatus = "No step has coordinates."
             ns.routeStatusError = true
             remember(signature, db.router)
             return
         end
         local pointed, count = pointTomTom(mapped)
         if not pointed then
-            ns.routeStatus = "TomTom hat den Wegpunkt nicht übernommen."
+            ns.routeStatus = "TomTom did not accept the waypoint."
             ns.routeStatusError = true
             ns.lastRouteKey = nil
             ns.lastRouteRouter = nil
             return
         end
         ns.activeStep = mapped[1].index
-        local text = count == 1 and ("TomTom zeigt Schritt " .. mapped[1].index .. ".")
-            or ("TomTom zeigt " .. count .. " Wegpunkte ab Schritt " .. mapped[1].index .. ".")
+        local text = count == 1 and ("TomTom shows step " .. mapped[1].index .. ".")
+            or ("TomTom shows " .. count .. " waypoints from step " .. mapped[1].index .. ".")
         ns.routeStatus = noteSkipped(text, skipped)
         ns.routeStatusError = false
         remember(signature, db.router)
@@ -254,7 +254,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
 
     clearTomTom()
     if not ns.SpfReady() then
-        ns.routeStatus = "Shortest Path Forever ist nicht geladen."
+        ns.routeStatus = "Shortest Path Forever is not loaded."
         ns.routeStatusError = true
         ns.lastRouteKey = nil
         ns.lastRouteRouter = nil
@@ -262,7 +262,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
     end
     if #mapped == 0 then
         clearSpf()
-        ns.routeStatus = "Kein Schritt mit Koordinaten."
+        ns.routeStatus = "No step has coordinates."
         ns.routeStatusError = true
         remember(signature, db.router)
         return
@@ -277,7 +277,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
         return
     end
     ns.activeStep = mapped[1].index
-    local text = "Shortest Path führt " .. count .. (count == 1 and " Stopp." or " Stopps.")
+    local text = "Shortest Path leads " .. count .. (count == 1 and " stop." or " stops.")
     ns.routeStatus = noteSkipped(text, skipped)
     ns.routeStatusError = false
     remember(signature, db.router)

@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: Clear the Log
-## Notes: Plant eine knappe Reihenfolge für die Quests in deinem Log
+## Notes: Plans a short route for the quests in your log
 ## Author: ClearTheLog
-## Version: 0.3.1
+## Version: 0.3.2
 ## Category: Quests
 ## Dependencies: QuestieDB
 ## OptionalDeps: TomTom, ShortestPathForever
