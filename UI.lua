@@ -1,6 +1,8 @@
 local _, ns = ...
 
 local ROW_QUEST = 32
+local ZONE_GAP = 20
+local ZONE_HEADER = 28
 local ROW_STEP = 44
 local BACKDROP = {
     bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -1309,7 +1311,8 @@ local function fillQuests(plan)
         questEmpty:Hide()
     end
 
-    for _, group in ipairs(groups) do
+    for index, group in ipairs(groups) do
+        if index > 1 then y = y + ZONE_GAP end
         usedHeaders = usedHeaders + 1
         local header = questHeaders[usedHeaders]
         if not header then
@@ -1322,7 +1325,7 @@ local function fillQuests(plan)
         header:SetPoint("RIGHT", child, "RIGHT", -8, 0)
         header:SetText(group.zone)
         header:Show()
-        y = y + 22
+        y = y + ZONE_HEADER
 
         for _, quest in ipairs(group.quests) do
             usedRows = usedRows + 1
