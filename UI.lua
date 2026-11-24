@@ -955,7 +955,7 @@ questHint:SetPoint("TOPLEFT", 24, -46)
 questHint:SetPoint("RIGHT", quests, "RIGHT", -24, 0)
 questHint:SetJustifyH("LEFT")
 questHint:SetWordWrap(true)
-questHint:SetText("Check a quest to put it in the guide. Hover a quest to see its chain and choose the follow-ups.")
+questHint:SetText("Check a quest to put it in the guide. Expand a chain to choose its follow-ups.")
 
 local questScroll = scroller(quests, "ClearTheLogQuestScroll", 16, -88, -34, 36)
 local questRows = {}
@@ -970,239 +970,108 @@ questStatus:SetPoint("BOTTOMLEFT", 24, 16)
 questStatus:SetPoint("RIGHT", quests, "RIGHT", -24, 0)
 questStatus:SetJustifyH("LEFT")
 
-local chainTip = CreateFrame("Frame", "ClearTheLogChainTip", UIParent, "BackdropTemplate")
-chainTip:SetFrameStrata("TOOLTIP")
-chainTip:SetFrameLevel(200)
-chainTip:SetClampedToScreen(true)
-chainTip:SetSize(300, 80)
-chainTip:EnableMouse(true)
-chainTip:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true,
-    tileSize = 16,
-    edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-})
-chainTip:SetBackdropColor(0.05, 0.05, 0.07, 0.95)
-chainTip:SetBackdropBorderColor(1, 0.82, 0, 0.8)
-chainTip:Hide()
-
-chainTip.title = chainTip:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-chainTip.title:SetPoint("TOPLEFT", 12, -10)
-chainTip.title:SetPoint("TOPRIGHT", -12, -10)
-chainTip.title:SetJustifyH("LEFT")
-
-chainTip.hint = chainTip:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-chainTip.hint:SetPoint("BOTTOMLEFT", 12, 10)
-chainTip.hint:SetPoint("BOTTOMRIGHT", -12, 10)
-chainTip.hint:SetJustifyH("LEFT")
-chainTip.hint:SetWordWrap(true)
-if chainTip.hint.SetMaxLines then chainTip.hint:SetMaxLines(2) end
-
-local chainScroll = CreateFrame("ScrollFrame", nil, chainTip)
-chainScroll:SetPoint("TOPLEFT", 8, -30)
-chainScroll:SetPoint("BOTTOMRIGHT", -8, 36)
-local chainChild = CreateFrame("Frame", nil, chainScroll)
-chainChild:SetSize(280, 1)
-chainScroll:SetScrollChild(chainChild)
-chainScroll:SetScript("OnSizeChanged", function(self)
-    chainChild:SetWidth(math.max(40, self:GetWidth()))
-end)
-
+local ROW_CHAIN = 24
 local chainRows = {}
-local chainHideToken = 0
-local questTipRow
+local openChains = {}
 
-local function chainHot()
-    if chainTip:IsShown() then
-        if chainTip:IsMouseOver() then return true end
-        for _, row in ipairs(chainRows) do
-            if row:IsShown() and row:IsMouseOver() then return true end
-        end
-    end
-    if questTipRow and questTipRow:IsShown() and questTipRow:IsMouseOver() then return true end
-    if questTipRow and questTipRow.check and questTipRow.check:IsMouseOver() then return true end
-    if questTipRow and questTipRow.hit and questTipRow.hit:IsMouseOver() then return true end
-    return false
-end
-
-local function scheduleChainHide()
-    chainHideToken = chainHideToken + 1
-    local token = chainHideToken
-    local function later()
-        if token ~= chainHideToken then return end
-        if chainHot() then return end
-        GameTooltip:Hide()
-        chainTip:Hide()
-        questTipRow = nil
-    end
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0.2, later)
-    else
-        later()
-    end
-end
-
-local function chainWheel(_, delta)
-    local range = 0
-    if chainScroll.GetVerticalScrollRange then
-        range = chainScroll:GetVerticalScrollRange() or 0
-    else
-        range = math.max(0, chainChild:GetHeight() - chainScroll:GetHeight())
-    end
-    if range <= 0 then return end
-    local nextScroll = chainScroll:GetVerticalScroll() - delta * 36
-    if nextScroll < 0 then nextScroll = 0 end
-    if nextScroll > range then nextScroll = range end
-    chainScroll:SetVerticalScroll(nextScroll)
-end
-
-chainTip:EnableMouseWheel(true)
-chainTip:SetScript("OnMouseWheel", chainWheel)
-chainTip:SetScript("OnEnter", function() chainHideToken = chainHideToken + 1 end)
-chainTip:SetScript("OnLeave", scheduleChainHide)
-
-local showQuestTip
-
-local function chainMemberLine(member)
-    local level = (type(member.level) == "number" and member.level > 0) and ("[" .. member.level .. "] ") or ""
-    local dungeon = member.dungeon and "  |cffffcc00Dungeon|r" or ""
-    local mark = member.role == "current" and "  |cffffd100current|r" or ""
-    return level .. (member.name or "Quest") .. dungeon .. mark
-end
-
-local function chainRowButton(parent)
-    local row = CreateFrame("Button", nil, parent)
-    row:SetHeight(18)
-    row:RegisterForClicks("LeftButtonUp")
-    row:EnableMouseWheel(true)
-    row:SetScript("OnMouseWheel", chainWheel)
-    row.box = row:CreateTexture(nil, "ARTWORK")
-    row.box:SetSize(14, 14)
-    row.box:SetPoint("LEFT", 2, 0)
-    row.indexText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.indexText:SetPoint("LEFT", 18, 0)
-    row.indexText:SetWidth(28)
-    row.indexText:SetJustifyH("RIGHT")
-    row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.label:SetPoint("LEFT", 50, 0)
-    row.label:SetPoint("RIGHT", -4, 0)
-    row.label:SetJustifyH("LEFT")
-    clip(row.label)
-    row.highlight = row:CreateTexture(nil, "BACKGROUND")
-    row.highlight:SetAllPoints()
-    row.highlight:SetColorTexture(1, 0.82, 0, 0.16)
-    row.highlight:Hide()
-    row:SetScript("OnEnter", function()
-        chainHideToken = chainHideToken + 1
-        if row.role == "followup" then row.highlight:Show() end
-    end)
-    row:SetScript("OnLeave", function()
-        row.highlight:Hide()
-        scheduleChainHide()
-    end)
-    row:SetScript("OnClick", function()
-        if row.role ~= "followup" or not chainTip.questId or not row.memberId then return end
-        if not ns.AdjustChain or not ns.AdjustChain(chainTip.questId, row.memberId) then return end
-        if ns.RequestRefresh then ns.RequestRefresh("manual") end
-        if questTipRow then showQuestTip(questTipRow, questTipRow.hit or questTipRow) end
-    end)
-    return row
-end
-
-local function fillChainTip(questId)
-    local view = ns.ChainView and ns.ChainView(questId) or nil
-    chainTip.questId = questId
-    if not view then
-        chainTip:Hide()
-        return
-    end
-    chainTip.title:SetText(view.label or "Chain")
-    local followups = false
-    for _, member in ipairs(view.members) do
-        if member.role == "followup" then followups = true break end
-    end
-    if followups then
-        chainTip.hint:SetText("Click a follow-up to include the chain through it. Click an included follow-up to drop it and every quest after it.")
-    else
-        chainTip.hint:SetText("No later quests in this chain.")
-    end
-    for index, member in ipairs(view.members) do
-        local row = chainRows[index]
-        if not row then
-            row = chainRowButton(chainChild)
-            chainRows[index] = row
-        end
-        row.memberId = member.id
-        row.role = member.role
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", chainChild, "TOPLEFT", 0, -((index - 1) * 18))
-        row:SetPoint("TOPRIGHT", chainChild, "TOPRIGHT", 0, -((index - 1) * 18))
-        row.indexText:SetText(member.index .. ".")
-        row.label:SetText(chainMemberLine(member))
-        if member.role == "current" then
-            row.indexText:SetTextColor(1, 0.82, 0)
-            row.label:SetTextColor(1, 0.92, 0.65)
-        elseif member.included then
-            row.indexText:SetTextColor(0.55, 1, 0.55)
-            row.label:SetTextColor(1, 1, 1)
-        else
-            row.indexText:SetTextColor(0.55, 0.55, 0.55)
-            row.label:SetTextColor(0.55, 0.55, 0.55)
-        end
-        if member.role == "followup" then
-            row.box:Show()
-            if member.included then
-                row.box:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-            else
-                row.box:SetTexture("Interface\\Buttons\\UI-CheckBox-Up")
-            end
-        else
-            row.box:Hide()
-        end
-        row.highlight:Hide()
-        row:Show()
-    end
-    for index = #view.members + 1, #chainRows do chainRows[index]:Hide() end
-    local listH = math.min(#view.members * 18, 320)
-    chainChild:SetHeight(math.max(#view.members * 18, 1))
-    chainTip:SetHeight(listH + 72)
-    if chainScroll.SetVerticalScroll then chainScroll:SetVerticalScroll(0) end
-    chainTip:Show()
-end
-
-local function placeChainTip()
-    chainTip:ClearAllPoints()
-    local width = chainTip:GetWidth()
-    local tipRight = GameTooltip.GetRight and GameTooltip:GetRight()
-    local screenRight = UIParent and UIParent.GetRight and UIParent:GetRight()
-    if tipRight and screenRight and screenRight - tipRight < width + 24 then
-        chainTip:SetPoint("TOPRIGHT", GameTooltip, "TOPLEFT", -4, 0)
-    else
-        chainTip:SetPoint("TOPLEFT", GameTooltip, "TOPRIGHT", 4, 0)
-    end
-end
-
-function showQuestTip(row, owner)
+local function showQuestTip(row, owner)
     if not row or not row.questId then return end
-    chainHideToken = chainHideToken + 1
-    questTipRow = row
     GameTooltip:SetOwner(owner or row, "ANCHOR_RIGHT")
     GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
-    local view = ns.ChainView and ns.ChainView(row.questId)
-    if view and view.label then GameTooltip:AddLine(view.label, 1, 0.82, 0) end
+    if row.chainText then GameTooltip:AddLine(row.chainText, 1, 0.82, 0) end
     addQuestBody(row.questId, row.objectives)
     addContacts(row.questId)
     if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
     if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
-    GameTooltip:Show()
-    if view then
-        fillChainTip(row.questId)
-        placeChainTip()
-    else
-        chainTip:Hide()
+    if row.chainText then
+        GameTooltip:AddLine("Expand the chain to choose follow-ups.", 0.7, 0.7, 0.7, true)
     end
+    GameTooltip:Show()
+end
+
+local function hideQuestTip()
+    GameTooltip:Hide()
+end
+
+local function paintExpand(button, open)
+    local base = open and "Interface\\Buttons\\UI-MinusButton-" or "Interface\\Buttons\\UI-PlusButton-"
+    button:SetNormalTexture(base .. "UP")
+    button:SetPushedTexture(base .. "DOWN")
+    button:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
+end
+
+local function chainMemberText(member)
+    local level = (type(member.level) == "number" and member.level > 0) and ("[" .. member.level .. "] ") or ""
+    local dungeon = member.dungeon and "  |cffffcc00Dungeon|r" or ""
+    local here = member.role == "current" and "  |cffffd100current|r" or ""
+    return member.index .. ".  " .. level .. (member.name or "Quest") .. dungeon .. here
+end
+
+local function chainMemberRow(parent)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(ROW_CHAIN)
+
+    row.shade = row:CreateTexture(nil, "BACKGROUND")
+    row.shade:SetAllPoints()
+    row.shade:SetColorTexture(1, 0.82, 0, 0.06)
+
+    row.rail = row:CreateTexture(nil, "ARTWORK")
+    row.rail:SetPoint("TOPLEFT", 22, 0)
+    row.rail:SetPoint("BOTTOMLEFT", 22, 0)
+    row.rail:SetWidth(2)
+    row.rail:SetColorTexture(1, 0.82, 0, 0.55)
+
+    row.check = CreateFrame("CheckButton", nil, row)
+    row.check:SetSize(22, 22)
+    row.check:SetPoint("LEFT", 30, 0)
+    styleCheck(row.check)
+    if row.check.SetMotionScriptsWhileDisabled then row.check:SetMotionScriptsWhileDisabled(true) end
+    row.check:SetScript("OnClick", function(self)
+        if silent or row.role ~= "followup" or not row.logQuestId or not row.memberId then
+            if row.role == "current" then self:SetChecked(true) else self:SetChecked(false) end
+            return
+        end
+        if ns.AdjustChain then ns.AdjustChain(row.logQuestId, row.memberId) end
+        if ns.RequestRefresh then ns.RequestRefresh("manual") end
+    end)
+    row.check:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
+        if row.level then GameTooltip:AddLine("Level " .. row.level, 1, 1, 1) end
+        if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
+        if row.role == "followup" then
+            if row.included then
+                GameTooltip:AddLine("Uncheck to drop this quest and every quest after it.", 0.8, 0.8, 0.8, true)
+            else
+                GameTooltip:AddLine("Check to include every quest through this one.", 0.8, 0.8, 0.8, true)
+            end
+        elseif row.role == "current" then
+            GameTooltip:AddLine("This is the quest in your log.", 0.8, 0.8, 0.8, true)
+        else
+            GameTooltip:AddLine("Earlier in the chain.", 0.8, 0.8, 0.8, true)
+        end
+        GameTooltip:Show()
+    end)
+    row.check:SetScript("OnLeave", hideQuestTip)
+
+    row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.name:SetPoint("LEFT", row.check, "RIGHT", 2, 0)
+    row.name:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+    row.name:SetJustifyH("LEFT")
+    clip(row.name)
+
+    row.hit = CreateFrame("Button", nil, row)
+    row.hit:SetPoint("TOPLEFT", row.check, "TOPRIGHT", 0, 0)
+    row.hit:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -4, 0)
+    row.hit:SetScript("OnClick", function()
+        if silent or row.role ~= "followup" then return end
+        row.check:Click()
+    end)
+    row.hit:SetScript("OnEnter", function()
+        row.check:GetScript("OnEnter")(row.check)
+    end)
+    row.hit:SetScript("OnLeave", hideQuestTip)
+    return row
 end
 
 local function questRow(parent)
@@ -1210,7 +1079,7 @@ local function questRow(parent)
     row:SetHeight(ROW_QUEST)
     row:EnableMouse(true)
     row:SetScript("OnEnter", function() showQuestTip(row, row) end)
-    row:SetScript("OnLeave", scheduleChainHide)
+    row:SetScript("OnLeave", hideQuestTip)
 
     row.shade = row:CreateTexture(nil, "BACKGROUND")
     row.shade:SetAllPoints()
@@ -1228,10 +1097,28 @@ local function questRow(parent)
     row.check:SetScript("OnEnter", function(self)
         showQuestTip(row, self)
     end)
-    row.check:SetScript("OnLeave", scheduleChainHide)
+    row.check:SetScript("OnLeave", hideQuestTip)
+
+    row.expand = CreateFrame("Button", nil, row)
+    row.expand:SetSize(18, 18)
+    row.expand:SetPoint("RIGHT", -6, 0)
+    row.expand:SetScript("OnClick", function()
+        if silent or not row.questId then return end
+        openChains[row.questId] = not openChains[row.questId] or nil
+        if ns.RenderQuests then ns.RenderQuests(ns.lastPlan, ns.lastErr) end
+    end)
+    row.expand:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(openChains[row.questId] and "Hide chain" or "Show chain", 1, 0.82, 0)
+        GameTooltip:AddLine("Opens every quest in this chain. Check the follow-ups you want in the route.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    row.expand:SetScript("OnLeave", hideQuestTip)
+    paintExpand(row.expand, false)
+    row.expand:Hide()
 
     row.chainLabel = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.chainLabel:SetPoint("RIGHT", -8, 0)
+    row.chainLabel:SetPoint("RIGHT", row.expand, "LEFT", -2, 0)
     row.chainLabel:SetWidth(48)
     row.chainLabel:SetJustifyH("RIGHT")
     row.chainLabel:Hide()
@@ -1251,7 +1138,7 @@ local function questRow(parent)
     row.hit:SetScript("OnEnter", function()
         showQuestTip(row, row.hit)
     end)
-    row.hit:SetScript("OnLeave", scheduleChainHide)
+    row.hit:SetScript("OnLeave", hideQuestTip)
     return row
 end
 
@@ -1289,7 +1176,7 @@ end
 local function fillQuests(plan)
     local list = plan and plan.quests or {}
     local groups = grouped(list)
-    local y, usedRows, usedHeaders = 0, 0, 0
+    local y, usedRows, usedHeaders, usedChain = 0, 0, 0, 0
     local child = questScroll.child
 
     if #list == 0 then
@@ -1334,7 +1221,11 @@ local function fillQuests(plan)
             row.shade:SetShown(usedRows % 2 == 0)
 
             local chain = quest.chain
+            local opened = chain and openChains[quest.id] and true or false
+            row.chainText = chain and string.format("Chain %d/%d", chain.index, chain.total) or nil
             if chain then
+                row.expand:Show()
+                paintExpand(row.expand, opened)
                 row.chainLabel:SetText(string.format("%d/%d", chain.index, chain.total))
                 row.chainLabel:Show()
                 if quest.included then
@@ -1343,8 +1234,10 @@ local function fillQuests(plan)
                     row.chainLabel:SetTextColor(0.45, 0.45, 0.45)
                 end
             else
+                row.expand:Hide()
                 row.chainLabel:SetText("")
                 row.chainLabel:Hide()
+                openChains[quest.id] = nil
             end
 
             row.name:ClearAllPoints()
@@ -1366,11 +1259,53 @@ local function fillQuests(plan)
             row.name:SetAlpha(quest.included and 1 or 0.45)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST
+
+            if opened then
+                local view = ns.ChainView and ns.ChainView(quest.id)
+                for _, member in ipairs(view and view.members or {}) do
+                    usedChain = usedChain + 1
+                    local childRow = chainRows[usedChain]
+                    if not childRow then
+                        childRow = chainMemberRow(child)
+                        chainRows[usedChain] = childRow
+                    end
+                    childRow:ClearAllPoints()
+                    childRow:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+                    childRow:SetPoint("TOPRIGHT", child, "TOPRIGHT", 0, -y)
+                    childRow:Show()
+                    childRow.logQuestId = quest.id
+                    childRow.memberId = member.id
+                    childRow.role = member.role
+                    childRow.included = member.included and true or false
+                    childRow.level = member.level
+                    childRow.dungeon = member.dungeon
+                    childRow.tipName = member.name
+                    childRow.name:SetText(chainMemberText(member))
+                    if member.role == "current" then
+                        childRow.name:SetTextColor(1, 0.92, 0.65)
+                    elseif member.included then
+                        childRow.name:SetTextColor(1, 1, 1)
+                    else
+                        childRow.name:SetTextColor(0.55, 0.55, 0.55)
+                    end
+                    if member.role == "followup" then
+                        childRow.check:Enable()
+                        childRow.check:SetAlpha(1)
+                        childRow.check:SetChecked(member.included and true or false)
+                    else
+                        childRow.check:Disable()
+                        childRow.check:SetAlpha(0.55)
+                        childRow.check:SetChecked(member.role == "current")
+                    end
+                    y = y + ROW_CHAIN
+                end
+            end
         end
     end
 
     for index = usedHeaders + 1, #questHeaders do questHeaders[index]:Hide() end
     for index = usedRows + 1, #questRows do questRows[index]:Hide() end
+    for index = usedChain + 1, #chainRows do chainRows[index]:Hide() end
     fit(questScroll, math.max(y, 1))
 
     local included = 0
@@ -1401,7 +1336,7 @@ end
 questsButton:SetScript("OnClick", function()
     if quests:IsShown() then quests:Hide() else quests:Show() end
 end)
-bindTip(questsButton, "Quests", "Chooses which quests are in the guide. Hover a quest to set how far its chain is planned.")
+bindTip(questsButton, "Quests", "Chooses which quests are in the guide. Expand a chain to choose its follow-ups.")
 
 function ns.ToggleQuests()
     if quests:IsShown() then quests:Hide() else quests:Show() end
