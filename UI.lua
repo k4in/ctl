@@ -22,6 +22,9 @@ end
 
 local DUNGEON_CODE = hexColor(DUNGEON_R, DUNGEON_G, DUNGEON_B)
 local GROUP_CODE = hexColor(GROUP_R, GROUP_G, GROUP_B)
+local CHAIN_CURRENT = hexColor(0.75, 0.48, 0.95)
+local CHAIN_DONE = hexColor(0.30, 0.55, 0.32)
+local CHAIN_NEXT = hexColor(0.70, 0.70, 0.70)
 
 local function levelPrefix(level, questId)
     if type(level) ~= "number" or level <= 0 or type(ns.LevelTone) ~= "function" then return "" end
@@ -1085,9 +1088,14 @@ local function paintExpand(button, open)
     button:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
 end
 
-local function chainMemberText(member)
-    local here = member.role == "current" and "  current" or ""
-    return member.index .. ".  " .. levelPrefix(member.level, member.id) .. (member.name or "Quest") .. here
+local function chainMemberText(member, finished)
+    local tone = CHAIN_NEXT
+    if member.role == "current" then
+        tone = CHAIN_CURRENT
+    elseif finished then
+        tone = CHAIN_DONE
+    end
+    return member.index .. ".  " .. levelPrefix(member.level, member.id) .. tone .. (member.name or "Quest") .. "|r"
 end
 
 local function tintCheck(check, r, g, b)
@@ -1328,9 +1336,10 @@ local function fillQuests(plan)
                 row.name:SetPoint("RIGHT", row, "RIGHT", -8, 0)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             end
-            local done = quest.complete and "|cff40ff40done|r  " or ""
-            row.name:SetText(done .. levelPrefix(quest.level, quest.id) .. (quest.name or "Quest"))
-            row.name:SetAlpha(quest.included and 1 or 0.45)
+            local ready = quest.complete and "  |cff40ff40- done -|r" or ""
+            row.name:SetTextColor(1, 1, 1)
+            row.name:SetAlpha(1)
+            row.name:SetText(levelPrefix(quest.level, quest.id) .. "|cffffffff" .. (quest.name or "Quest") .. "|r" .. ready)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST
 
@@ -1359,21 +1368,19 @@ local function fillQuests(plan)
                         finished = true
                     end
                     childRow.done = finished
-                    childRow.name:SetText(chainMemberText(member))
+                    childRow.name:SetTextColor(1, 1, 1)
+                    childRow.name:SetText(chainMemberText(member, finished))
                     if member.role == "current" then
-                        childRow.name:SetTextColor(0.75, 0.48, 0.95)
                         childRow.check:Disable()
                         childRow.check:SetAlpha(1)
                         tintCheck(childRow.check, 1, 1, 1)
                         childRow.check:SetChecked(true)
                     elseif finished then
-                        childRow.name:SetTextColor(0.30, 0.55, 0.32)
                         childRow.check:Disable()
                         childRow.check:SetAlpha(1)
                         tintCheck(childRow.check, 0.55, 0.55, 0.55)
                         childRow.check:SetChecked(true)
                     else
-                        childRow.name:SetTextColor(0.70, 0.70, 0.70)
                         childRow.check:Enable()
                         childRow.check:SetAlpha(1)
                         tintCheck(childRow.check, 1, 1, 1)
