@@ -1026,7 +1026,12 @@ questStatus:SetJustifyH("LEFT")
 
 local ROW_CHAIN = 24
 local chainRows = {}
+-- Nil means expanded. False means the player collapsed this chain.
 local openChains = {}
+
+local function chainExpanded(questId)
+    return openChains[questId] ~= false
+end
 
 local function addArea(questId)
     if not ns.ObjectiveZoneLabel then return end
@@ -1127,7 +1132,11 @@ local function chainMemberRow(parent)
     if row.check.SetMotionScriptsWhileDisabled then row.check:SetMotionScriptsWhileDisabled(true) end
     row.check:SetScript("OnClick", function(self)
         if silent or row.done or row.role ~= "followup" or not row.logQuestId or not row.memberId then
-            self:SetChecked(row.done or row.role == "current")
+            if row.role == "current" then
+                self:SetChecked(row.parentIncluded and true or false)
+            else
+                self:SetChecked(row.done and true or false)
+            end
             return
         end
         if ns.AdjustChain then ns.AdjustChain(row.logQuestId, row.memberId) end
@@ -1188,12 +1197,16 @@ local function questRow(parent)
     row.expand:SetPoint("RIGHT", -6, 0)
     row.expand:SetScript("OnClick", function()
         if silent or not row.questId then return end
-        openChains[row.questId] = not openChains[row.questId] or nil
+        if chainExpanded(row.questId) then
+            openChains[row.questId] = false
+        else
+            openChains[row.questId] = nil
+        end
         if ns.RenderQuests then ns.RenderQuests(ns.lastPlan, ns.lastErr) end
     end)
     row.expand:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(openChains[row.questId] and "Hide chain" or "Show chain", 1, 0.82, 0)
+        GameTooltip:SetText(chainExpanded(row.questId) and "Hide chain" or "Show chain", 1, 0.82, 0)
         GameTooltip:AddLine("Opens every quest in this chain. Check the follow-ups you want in the route.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
@@ -1305,7 +1318,7 @@ local function fillQuests(plan)
             row.shade:SetShown(usedRows % 2 == 0)
 
             local chain = quest.chain
-            local opened = chain and openChains[quest.id] and true or false
+            local opened = chain and chainExpanded(quest.id) or false
             row.chainText = chain and string.format("Chain %d/%d", chain.index, chain.total) or nil
             if chain then
                 row.expand:Show()
@@ -1359,6 +1372,7 @@ local function fillQuests(plan)
                     childRow.logQuestId = quest.id
                     childRow.memberId = member.id
                     childRow.role = member.role
+                    childRow.parentIncluded = quest.included and true or false
                     childRow.included = member.included and true or false
                     childRow.level = member.level
                     childRow.dungeon = member.dungeon
@@ -1371,10 +1385,11 @@ local function fillQuests(plan)
                     childRow.name:SetTextColor(1, 1, 1)
                     childRow.name:SetText(chainMemberText(member, finished))
                     if member.role == "current" then
+                        childRow.check:Enable()
+                        childRow.check:SetChecked(quest.included and true or false)
                         childRow.check:Disable()
                         childRow.check:SetAlpha(1)
                         tintCheck(childRow.check, 1, 1, 1)
-                        childRow.check:SetChecked(true)
                     elseif finished then
                         childRow.check:Disable()
                         childRow.check:SetAlpha(1)
@@ -1418,6 +1433,7 @@ function ns.RenderQuests(plan, err)
 end
 
 quests.onPresent = function()
+    openChains = {}
     if ns.lastPlan or ns.lastErr then ns.RenderQuests(ns.lastPlan, ns.lastErr) end
     ns.RequestRefresh("draw")
 end
