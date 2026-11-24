@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: Clear the Log
+## Notes: Plant eine knappe Reihenfolge für die Quests in deinem Log
+## Author: ClearTheLog
+## Version: 0.1.0
+## Category: Quests
+## Dependencies: QuestieDB
+## SavedVariablesPerCharacter: ClearTheLogCharDB
+## IconTexture: Interface\Icons\INV_Misc_Map_01
+
+Core.lua
+Database.lua
+Chains.lua
+Planner.lua
+UI.lua
