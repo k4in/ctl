@@ -220,10 +220,17 @@ function ns.BuildPlan(rows, player)
             if questLevel and questLevel > 0 then level = questLevel end
         end
 
+        local zone = row.zone
+        if (type(zone) ~= "string" or zone == "") and dbReady then
+            local area = ns.QuestNumber(row.id, "zoneOrSort")
+            if type(area) == "number" and area > 0 then zone = ns.ZoneName(area) end
+        end
+
         view[#view + 1] = {
             id = row.id,
             name = name,
             level = level,
+            zone = (type(zone) == "string" and zone ~= "") and zone or "Ohne Gebiet",
             included = ns.IsIncluded(row.id),
             chainEnabled = ns.ChainEnabled(row.id),
             chain = chain,
@@ -295,6 +302,5 @@ function ns.BuildPlan(rows, player)
         quests = view,
         steps = orderStops(stops, objCount, player),
         warning = warning,
-        mode = ns.CharDB().mode,
     }
 end

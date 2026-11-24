@@ -29,41 +29,84 @@ end
 
 function ns.CharDB()
     if not ns.ready then
-        return { mode = "ignore", ignored = {}, selected = {}, chainOff = {} }
+        return {
+            tracked = {}, chain = {}, decided = {},
+            ignored = {}, selected = {}, chainOff = {},
+            refreshAccept = true, refreshTurnin = true, refreshObjective = true,
+            autoTrack = true, autoChain = true,
+        }
     end
     local db = ClearTheLogCharDB
     if type(db) ~= "table" then
         db = {}
         ClearTheLogCharDB = db
     end
-    if db.mode ~= "ignore" and db.mode ~= "select" then db.mode = "ignore" end
+    if type(db.tracked) ~= "table" then db.tracked = {} end
+    if type(db.chain) ~= "table" then db.chain = {} end
+    if type(db.decided) ~= "table" then db.decided = {} end
     if type(db.ignored) ~= "table" then db.ignored = {} end
     if type(db.selected) ~= "table" then db.selected = {} end
     if type(db.chainOff) ~= "table" then db.chainOff = {} end
+    if db.legacyMode == nil and not db.migrated and (db.mode == "ignore" or db.mode == "select") then
+        db.legacyMode = db.mode
+    end
+    db.migrated = true
+    if db.router ~= "tomtom" and db.router ~= "spf" then db.router = nil end
+    if db.refreshAccept == nil then db.refreshAccept = true end
+    if db.refreshTurnin == nil then db.refreshTurnin = true end
+    if db.refreshObjective == nil then db.refreshObjective = true end
+    if db.autoTrack == nil then db.autoTrack = true end
+    if db.autoChain == nil then db.autoChain = true end
     return db
 end
 
 function ns.IsIncluded(questId)
-    local db = ns.CharDB()
-    if db.mode == "select" then return db.selected[questId] == true end
-    return db.ignored[questId] ~= true
+    local value = ns.CharDB().tracked[questId]
+    if value == nil then return true end
+    return value == true
 end
 
 function ns.ChainEnabled(questId)
-    return ns.CharDB().chainOff[questId] ~= true
+    local db = ns.CharDB()
+    if db.chain[questId] == nil then return db.chainOff[questId] ~= true end
+    return db.chain[questId] == true
 end
 
 function ns.SetIncluded(questId, included)
     local db = ns.CharDB()
-    if db.mode == "select" then
-        db.selected[questId] = included and true or nil
-    else
-        db.ignored[questId] = included and nil or true
-    end
+    db.tracked[questId] = included and true or false
+    db.decided[questId] = true
 end
 
 function ns.SetChainEnabled(questId, enabled)
-    ns.CharDB().chainOff[questId] = enabled and nil or true
+    local db = ns.CharDB()
+    db.chain[questId] = enabled and true or false
+    db.decided[questId] = true
+end
+
+-- Quests already in the log keep their choice. Only an accept this session uses the auto options.
+function ns.DecideQuest(questId)
+    local db = ns.CharDB()
+    local fresh = ns.fresh and ns.fresh[questId]
+    if fresh then
+        if not db.decided[questId] then
+            db.tracked[questId] = db.autoTrack and true or false
+            db.chain[questId] = db.autoChain and true or false
+            db.decided[questId] = true
+        end
+        ns.fresh[questId] = nil
+        return
+    end
+    if db.decided[questId] then return end
+    if db.legacyMode == "select" then
+        db.tracked[questId] = db.selected[questId] == true
+    elseif db.legacyMode == "ignore" then
+        db.tracked[questId] = db.ignored[questId] ~= true
+    else
+        db.tracked[questId] = true
+    end
+    db.chain[questId] = not db.chainOff[questId]
+    db.decided[questId] = true
 end
 
 function ns.IsQuestDone(questId)
@@ -87,13 +130,19 @@ local function readLog()
         return nil, "Questlog ist gerade nicht lesbar."
     end
 
+    local zoneTitle
     for index = 1, count do
         local infoOk, info = pcall(C_QuestLog.GetInfo, index)
         if infoOk and type(info) == "table" then
             local questId = ns.Plain(info.questID)
             local isHeader = ns.Plain(info.isHeader)
             local isHidden = ns.Plain(info.isHidden)
-            if not isHeader and not isHidden and type(questId) == "number" and questId > 0 then
+            if isHeader then
+                local headerTitle = ns.Plain(info.title)
+                if type(headerTitle) == "string" and headerTitle ~= "" then
+                    zoneTitle = headerTitle
+                end
+            elseif not isHidden and type(questId) == "number" and questId > 0 then
                 local title = ns.Plain(info.title)
                 local level = ns.Plain(info.level)
                 local complete = false
@@ -131,6 +180,7 @@ local function readLog()
                     complete = complete,
                     objectives = objectives,
                     secret = secret,
+                    zone = zoneTitle,
                 }
             end
         end
@@ -148,56 +198,158 @@ local function pruneSaved(rows)
     local live = {}
     for _, row in ipairs(rows) do live[row.id] = true end
     local db = ns.CharDB()
-    for _, bucket in ipairs({ db.ignored, db.selected, db.chainOff }) do
+    for _, bucket in ipairs({ db.tracked, db.chain, db.decided, db.ignored, db.selected, db.chainOff }) do
         for questId in pairs(bucket) do
             if not live[questId] then bucket[questId] = nil end
         end
     end
 end
 
-function ns.RequestRefresh()
-    if not ns.window or not ns.window:IsShown() then return end
+-- Objective text often arrives a moment after the quest. An empty read must not
+-- look like progress, or login would push a route.
+local snapshot = {}
+
+local function takeSnapshot(rows)
+    local progress = false
+    local seen = {}
+    for _, row in ipairs(rows) do
+        seen[row.id] = true
+        if not row.secret then
+            local finished = 0
+            for _, objective in ipairs(row.objectives) do
+                if objective.finished then finished = finished + 1 end
+            end
+            local prev = snapshot[row.id]
+            local empty = #row.objectives == 0 and not row.complete
+            if not (empty and prev) then
+                local known = #row.objectives > 0 or row.complete or (prev and prev.known)
+                if prev and prev.known and (finished > prev.finished or (row.complete and not prev.complete)) then
+                    progress = true
+                end
+                snapshot[row.id] = {
+                    finished = finished,
+                    complete = row.complete and true or false,
+                    known = known and true or false,
+                }
+            end
+        end
+    end
+    for questId in pairs(snapshot) do
+        if not seen[questId] then snapshot[questId] = nil end
+    end
+    return progress
+end
+
+local pending = {}
+local IMMEDIATE = { manual = true, router = true, step = true, open = true, draw = true }
+
+local function combatLocked()
+    return InCombatLockdown and InCombatLockdown()
+end
+
+local function defer(reasons)
+    local deferred = ns.deferred
+    if type(deferred) ~= "table" then deferred = {} end
+    for key, value in pairs(reasons) do deferred[key] = value end
+    ns.deferred = deferred
+end
+
+function ns.RequestRefresh(reason)
+    if reason and IMMEDIATE[reason] then
+        ns.Refresh({ [reason] = true })
+        return
+    end
+    if reason then pending[reason] = true end
     if ns.refreshPending then return end
     ns.refreshPending = true
     C_Timer.After(0.2, function()
         ns.refreshPending = false
-        if ns.window and ns.window:IsShown() then ns.Refresh() end
+        local reasons = pending
+        pending = {}
+        ns.Refresh(reasons)
     end)
 end
 
-function ns.Refresh()
-    if not ns.ready or not ns.Render then return end
-    if InCombatLockdown and InCombatLockdown() then
-        ns.deferred = true
+function ns.RouteFrom(index)
+    ns.routeFrom = index
+    ns.RequestRefresh("step")
+end
+
+function ns.Refresh(reasons)
+    if not ns.ready then return end
+    reasons = reasons or {}
+    if combatLocked() then
+        defer(reasons)
         return
     end
+
+    local routeFrom = ns.routeFrom
+    ns.routeFrom = nil
 
     local rows, err = readLog()
     if not rows then
-        ns.Render(nil, err)
+        if reasons.step then ns.routeFrom = routeFrom end
+        ns.lastPlan, ns.lastErr = nil, err
+        if ns.Render then ns.Render(nil, err) end
         return
     end
+
     pruneSaved(rows)
+    for _, row in ipairs(rows) do ns.DecideQuest(row.id) end
+    if takeSnapshot(rows) then reasons.objective = true end
+    if reasons.removed and not reasons.turnin then reasons.abandon = true end
+
     local plan = ns.BuildPlan(rows, ns.PlayerLocation())
-    ns.Render(plan, err)
+    ns.lastPlan, ns.lastErr = plan, err
+
+    local fromIndex = 1
+    local directed = reasons.step
+        and not (reasons.accept or reasons.turnin or reasons.objective or reasons.manual or reasons.router)
+    if directed and type(routeFrom) == "number" then fromIndex = routeFrom end
+
+    if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
+        ns.PushRoute(plan, fromIndex, reasons)
+    end
+    if ns.PaintOptions then ns.PaintOptions() end
+    if ns.Render then ns.Render(plan, err) end
+end
+
+local function eventQuestId(first, second)
+    first, second = ns.Plain(first), ns.Plain(second)
+    if type(second) == "number" and second > 0 then return second end
+    if type(first) == "number" and first > 0 then return first end
+    return nil
+end
+
+local function noteAccepted(questId)
+    if type(questId) ~= "number" or questId <= 0 then return end
+    ns.fresh = ns.fresh or {}
+    ns.fresh[questId] = true
 end
 
 local eventFrame = CreateFrame("Frame")
-eventFrame:SetScript("OnEvent", function(_, event, arg1)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "ADDON_LOADED" and arg1 == addonName then
         ns.ready = true
         ns.CharDB()
     elseif event == "PLAYER_LOGIN" then
         ns.OpenDatabase()
+        ns.RequestRefresh("login")
     elseif event == "PLAYER_REGEN_ENABLED" then
-        if ns.deferred then
-            ns.deferred = false
-            ns.Refresh()
-        end
-    elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_ACCEPTED"
-        or event == "QUEST_REMOVED" or event == "QUEST_TURNED_IN"
-        or event == "ZONE_CHANGED_NEW_AREA" then
-        ns.RequestRefresh()
+        local deferred = ns.deferred
+        ns.deferred = nil
+        if type(deferred) == "table" then ns.Refresh(deferred) end
+    elseif event == "QUEST_ACCEPTED" then
+        noteAccepted(eventQuestId(arg1, arg2))
+        ns.RequestRefresh("accept")
+    elseif event == "QUEST_TURNED_IN" then
+        ns.RequestRefresh("turnin")
+    elseif event == "QUEST_REMOVED" then
+        ns.RequestRefresh("removed")
+    elseif event == "QUEST_LOG_UPDATE" then
+        ns.RequestRefresh("log")
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        ns.RequestRefresh("zone")
     end
 end)
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -216,19 +368,25 @@ SlashCmdList.CLEARTHELOG = function(message)
         ns.Say("Noch nicht geladen.")
         return
     end
-    local argument = (message or ""):match("^%s*(.-)%s*$"):lower()
+    local argument = (message or ""):match("^%s*(.-)%s*$")
+    argument = argument and argument:lower() or ""
+    if argument == "route" or argument == "guide" then
+        if ns.ToggleGuide then ns.ToggleGuide() end
+        return
+    end
     if argument == "reset" then
         local db = ns.CharDB()
+        db.tracked, db.chain, db.decided = {}, {}, {}
         db.ignored, db.selected, db.chainOff = {}, {}, {}
-        ns.Say("Auswahl zurückgesetzt.")
-        ns.Refresh()
+        db.legacyMode = nil
+        db.mode = nil
+        ns.Say("Questauswahl zurückgesetzt. Quests im Log sind wieder im Guide.")
+        ns.RequestRefresh("manual")
         return
     end
-    if argument == "ignore" or argument == "select" then
-        ns.CharDB().mode = argument
-        ns.Say(argument == "ignore" and "Modus: Ignorieren." or "Modus: Auswählen.")
-        if ns.window and ns.window:IsShown() then ns.Refresh() end
+    if argument == "" or argument == "options" or argument == "optionen" then
+        if ns.ToggleOptions then ns.ToggleOptions() end
         return
     end
-    if ns.Toggle then ns.Toggle() end
+    ns.Say("Befehle: /ctl, /ctl route, /ctl reset")
 end

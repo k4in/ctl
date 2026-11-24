@@ -121,6 +121,29 @@ local function continentOfMap(mapId)
     return nil
 end
 
+function ns.UiMap(areaId)
+    if ns.dbOpen == nil then ns.OpenDatabase() end
+    if type(areaToUi) ~= "table" or type(areaId) ~= "number" or areaId <= 0 then return nil end
+    local mapId = areaToUi[areaId]
+    if type(mapId) == "number" and mapId > 0 then return mapId end
+    return nil
+end
+
+-- Plan coordinates are questie-style 0-100. TomTom and Shortest Path want 0-1.
+function ns.MapFraction(value)
+    if type(value) ~= "number" then return nil end
+    local fraction = value / 100
+    if fraction < 0 or fraction > 1 then return nil end
+    return fraction
+end
+
+function ns.HasMapPoint(stop)
+    if type(stop) ~= "table" then return false end
+    return ns.UiMap(stop.areaId) ~= nil
+        and ns.MapFraction(stop.x) ~= nil
+        and ns.MapFraction(stop.y) ~= nil
+end
+
 function ns.ContinentOfArea(areaId)
     if not areaToUi or type(areaId) ~= "number" then return nil end
     local mapId = areaToUi[areaId]
