@@ -29,6 +29,40 @@ function ns.Say(message)
     print("|cffd4b44aClear the Log:|r " .. tostring(message))
 end
 
+-- How many levels below the player a quest stays green. The client knows the
+-- real range; 5 is the low-level classic value when no API answers.
+function ns.GreenRange()
+    local function call(fn, arg)
+        if type(fn) ~= "function" then return nil end
+        local ok, value = pcall(fn, arg)
+        if not ok then return nil end
+        value = ns.Plain(value)
+        if type(value) == "number" and value >= 0 then return value end
+    end
+    local questLog = C_QuestLog
+    return call(questLog and questLog.GetTrivialRange)
+        or call(UnitQuestTrivialLevelRange, "player")
+        or call(GetQuestGreenRange)
+        or 5
+end
+
+-- Standard quest colors from the gap to the player: red, orange, yellow, green, gray.
+function ns.LevelTone(level)
+    if type(level) ~= "number" or level <= 0 then return nil end
+    local player
+    if type(UnitLevel) == "function" then
+        local ok, value = pcall(UnitLevel, "player")
+        if ok then player = ns.Plain(value) end
+    end
+    if type(player) ~= "number" or player <= 0 then return 1, 0.82, 0 end
+    local diff = level - player
+    if diff >= 5 then return 1, 0.10, 0.10 end
+    if diff >= 3 then return 1, 0.50, 0.25 end
+    if diff >= -2 then return 1, 0.82, 0 end
+    if -diff <= ns.GreenRange() then return 0.25, 0.75, 0.25 end
+    return 0.50, 0.50, 0.50
+end
+
 function ns.CharDB()
     if not ns.ready then
         return {

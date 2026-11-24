@@ -13,6 +13,21 @@ local BACKDROP = {
 
 local silent = false
 
+local DUNGEON_R, DUNGEON_G, DUNGEON_B = 0.36, 0.87, 0.94
+
+local function hexColor(r, g, b)
+    return string.format("|cff%02x%02x%02x", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
+end
+
+local DUNGEON_CODE = hexColor(DUNGEON_R, DUNGEON_G, DUNGEON_B)
+
+local function levelPrefix(level)
+    if type(level) ~= "number" or level <= 0 or type(ns.LevelTone) ~= "function" then return "" end
+    local r, g, b = ns.LevelTone(level)
+    if not r then return "" end
+    return hexColor(r, g, b) .. "[" .. level .. "]|r "
+end
+
 local function bindTip(widget, title, body)
     widget:SetScript("OnEnter", function()
         GameTooltip:SetOwner(widget, "ANCHOR_RIGHT")
@@ -631,7 +646,7 @@ local function stepRow(parent)
         GameTooltip:SetText(stop.questName or "Step", 1, 0.82, 0)
         if stop.text then GameTooltip:AddLine(cleanTip(stop.text), 1, 1, 1, true) end
         if stop.note and stop.note ~= "" then GameTooltip:AddLine(stop.note, 0.8, 0.8, 0.8, true) end
-        if stop.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
+        if stop.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
         addQuestBody(stop.questId, questObjectives(stop.questId))
         addContacts(stop.questId)
         addFollowups(stop.questId)
@@ -722,7 +737,7 @@ local function currentDetails(stop)
     local meta = {}
     if stop.questName and stop.questName ~= "" then meta[#meta + 1] = stop.questName end
     if stop.note and stop.note ~= "" then meta[#meta + 1] = stop.note end
-    if stop.dungeon then meta[#meta + 1] = "Dungeon Quest" end
+    if stop.dungeon then meta[#meta + 1] = DUNGEON_CODE .. "Dungeon Quest|r" end
     if stop.skipped then meta[#meta + 1] = "skipped" end
     if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
         meta[#meta + 1] = "no map"
@@ -794,7 +809,7 @@ local function fillSteps(steps)
             anchorLine(row, -28, inset, true)
             local tag = stop.kind == "turnin" and "Turn in" or "Objective"
             if stop.followup then tag = tag .. " · Follow-up" end
-            local mark = stop.dungeon and "|cffffcc00D|r  " or ""
+            local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
             row.line:SetTextColor(1, 0.86, 0.35)
             height = showCurrent(row, currentDetails(stop), inset)
@@ -804,7 +819,7 @@ local function fillSteps(steps)
             anchorLine(row, -4, inset, false)
             local tag = stop.kind == "turnin" and "Turn in" or "Objective"
             if stop.followup then tag = tag .. " · Follow-up" end
-            local mark = stop.dungeon and "|cffffcc00D|r  " or ""
+            local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
             if stop.skipped then
                 row.line:SetTextColor(0.55, 0.55, 0.55)
@@ -1008,7 +1023,7 @@ local function showQuestTip(row, owner)
     addContacts(row.questId)
     addArea(row.questId)
     if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
-    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
+    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
     if row.chainText then
         GameTooltip:AddLine("Expand the chain to choose follow-ups.", 0.7, 0.7, 0.7, true)
     end
@@ -1019,13 +1034,14 @@ local function showChainTip(row, owner)
     if not row or not row.memberId then return end
     GameTooltip:SetOwner(owner or row, "ANCHOR_RIGHT")
     GameTooltip:SetText(row.tipName or "Quest", 1, 0.82, 0)
-    if type(row.level) == "number" and row.level > 0 then
-        GameTooltip:AddLine("Level " .. row.level, 1, 1, 1)
+    if type(row.level) == "number" and row.level > 0 and type(ns.LevelTone) == "function" then
+        local r, g, b = ns.LevelTone(row.level)
+        if r then GameTooltip:AddLine("Level " .. row.level, r, g, b) end
     end
     addQuestBody(row.memberId, questObjectives(row.memberId))
     addContacts(row.memberId)
     addArea(row.memberId)
-    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", 1, 0.82, 0) end
+    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
     if row.role == "followup" then
         if row.included then
             GameTooltip:AddLine("Uncheck to drop this quest and every quest after it.", 0.8, 0.8, 0.8, true)
@@ -1052,10 +1068,17 @@ local function paintExpand(button, open)
 end
 
 local function chainMemberText(member)
-    local level = (type(member.level) == "number" and member.level > 0) and ("[" .. member.level .. "] ") or ""
-    local dungeon = member.dungeon and "  |cffffcc00Dungeon|r" or ""
-    local here = member.role == "current" and "  |cffffd100current|r" or ""
-    return member.index .. ".  " .. level .. (member.name or "Quest") .. dungeon .. here
+    local dungeon = member.dungeon and ("  " .. DUNGEON_CODE .. "Dungeon|r") or ""
+    local here = member.role == "current" and "  current" or ""
+    return member.index .. ".  " .. levelPrefix(member.level) .. (member.name or "Quest") .. dungeon .. here
+end
+
+local function tintCheck(check, r, g, b)
+    for _, name in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetCheckedTexture" }) do
+        local getter = check[name]
+        local texture = type(getter) == "function" and getter(check) or nil
+        if texture and texture.SetVertexColor then texture:SetVertexColor(r, g, b) end
+    end
 end
 
 local function chainMemberRow(parent)
@@ -1078,8 +1101,8 @@ local function chainMemberRow(parent)
     styleCheck(row.check)
     if row.check.SetMotionScriptsWhileDisabled then row.check:SetMotionScriptsWhileDisabled(true) end
     row.check:SetScript("OnClick", function(self)
-        if silent or row.role ~= "followup" or not row.logQuestId or not row.memberId then
-            if row.role == "current" then self:SetChecked(true) else self:SetChecked(false) end
+        if silent or row.done or row.role ~= "followup" or not row.logQuestId or not row.memberId then
+            self:SetChecked(row.done or row.role == "current")
             return
         end
         if ns.AdjustChain then ns.AdjustChain(row.logQuestId, row.memberId) end
@@ -1288,10 +1311,9 @@ local function fillQuests(plan)
                 row.name:SetPoint("RIGHT", row, "RIGHT", -8, 0)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             end
-            local level = (quest.level and quest.level > 0) and ("[" .. quest.level .. "] ") or ""
             local done = quest.complete and "|cff40ff40done|r  " or ""
-            local mark = quest.dungeon and "|cffffcc00D|r  " or ""
-            row.name:SetText(done .. mark .. level .. (quest.name or "Quest"))
+            local mark = quest.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
+            row.name:SetText(done .. mark .. levelPrefix(quest.level) .. (quest.name or "Quest"))
             row.name:SetAlpha(quest.included and 1 or 0.45)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST
@@ -1316,22 +1338,30 @@ local function fillQuests(plan)
                     childRow.level = member.level
                     childRow.dungeon = member.dungeon
                     childRow.tipName = member.name
+                    local finished = member.role == "past"
+                    if not finished and member.role ~= "current" and ns.IsQuestDone and ns.IsQuestDone(member.id) then
+                        finished = true
+                    end
+                    childRow.done = finished
                     childRow.name:SetText(chainMemberText(member))
                     if member.role == "current" then
-                        childRow.name:SetTextColor(1, 0.92, 0.65)
-                    elseif member.included then
-                        childRow.name:SetTextColor(1, 1, 1)
+                        childRow.name:SetTextColor(0.75, 0.48, 0.95)
+                        childRow.check:Disable()
+                        childRow.check:SetAlpha(1)
+                        tintCheck(childRow.check, 1, 1, 1)
+                        childRow.check:SetChecked(true)
+                    elseif finished then
+                        childRow.name:SetTextColor(0.30, 0.55, 0.32)
+                        childRow.check:Disable()
+                        childRow.check:SetAlpha(1)
+                        tintCheck(childRow.check, 0.55, 0.55, 0.55)
+                        childRow.check:SetChecked(true)
                     else
-                        childRow.name:SetTextColor(0.55, 0.55, 0.55)
-                    end
-                    if member.role == "followup" then
+                        childRow.name:SetTextColor(0.70, 0.70, 0.70)
                         childRow.check:Enable()
                         childRow.check:SetAlpha(1)
+                        tintCheck(childRow.check, 1, 1, 1)
                         childRow.check:SetChecked(member.included and true or false)
-                    else
-                        childRow.check:Disable()
-                        childRow.check:SetAlpha(0.55)
-                        childRow.check:SetChecked(member.role == "current")
                     end
                     y = y + ROW_CHAIN
                 end
