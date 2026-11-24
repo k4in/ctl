@@ -144,22 +144,20 @@ end
 
 function ns.SetIncluded(questId, included)
     local db = ns.CharDB()
-    db.tracked[questId] = included and true or false
+    local on = included and true or false
+    db.tracked[questId] = on
     db.decided[questId] = true
-    if not included then ns.SetChainFollowups(questId, false) end
+    -- Checking a quest uses the chain option. Unchecking always drops the follow-ups.
+    ns.SetChainFollowups(questId, on and db.autoChain == true)
 end
 
 function ns.SetAllQuests(included)
     local quests = ns.lastPlan and ns.lastPlan.quests
     if type(quests) ~= "table" then return end
     local on = included and true or false
-    local chainOn = ns.CharDB().autoChain == true
     for _, quest in ipairs(quests) do
         local id = type(quest) == "table" and quest.id or nil
-        if type(id) == "number" then
-            ns.SetIncluded(id, on)
-            if on then ns.SetChainFollowups(id, chainOn) end
-        end
+        if type(id) == "number" then ns.SetIncluded(id, on) end
     end
     if ns.RequestRefresh then ns.RequestRefresh("manual") end
 end

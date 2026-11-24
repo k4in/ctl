@@ -326,7 +326,7 @@ addToggle("After completing an objective", -302, "refreshObjective", "After an o
 section(options, "New quests", -336)
 
 addToggle("Add new quests to the guide", -360, "autoTrack", "Add automatically", "A quest you accept is added to the guide.")
-addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "A newly accepted quest includes every follow-up. Add all uses the same choice. Expand a chain in the quest log to choose follow-ups.")
+addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "Checking a quest in the log includes every follow-up. A newly accepted quest does the same. Add all uses this choice.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -374,52 +374,51 @@ options.onPresent = function()
     ns.PaintOptions()
 end
 
-local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 190, {
+local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 220, {
     minW = 380, minH = 320, sizeKey = "sizeGuide",
 })
 guide.title:SetText("Guide")
 guide.subtitle:SetText("/ctl route")
 ns.guide = guide
 
+local function redIconButton(parent, texture, fallback)
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetSize(22, 22)
+    button:SetText("")
+    local icon = button:CreateTexture(nil, "OVERLAY")
+    icon:SetPoint("TOPLEFT", 3, -3)
+    icon:SetPoint("BOTTOMRIGHT", -3, 3)
+    local drawn = icon:SetTexture(texture)
+    if drawn == false and fallback then
+        icon:SetTexture(fallback)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
+    button.icon = icon
+    return button
+end
+
 local questsButton = CreateFrame("Button", nil, guide, "UIPanelButtonTemplate")
 questsButton:SetSize(80, 22)
 questsButton:SetPoint("TOPRIGHT", -36, -12)
 questsButton:SetText("Quests")
 
-local refreshButton
-do
-    local created, button = pcall(CreateFrame, "Button", nil, guide, "RefreshButtonTemplate")
-    if created and button then
-        refreshButton = button
-    else
-        refreshButton = CreateFrame("Button", nil, guide)
-        local icon = refreshButton:CreateTexture(nil, "ARTWORK")
-        icon:SetAllPoints()
-        icon:SetTexture("Interface\\Buttons\\UI-RefreshButton")
-        refreshButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-    end
-end
-refreshButton:SetSize(22, 22)
-refreshButton:SetPoint("RIGHT", questsButton, "LEFT", -6, 0)
+local optionsButton = redIconButton(guide, "Interface\\Buttons\\UI-OptionsButton", "Interface\\Icons\\INV_Misc_Gear_01")
+optionsButton:SetPoint("RIGHT", questsButton, "LEFT", -6, 0)
+optionsButton:SetScript("OnClick", function()
+    if ns.ToggleOptions then ns.ToggleOptions() end
+end)
+bindTip(optionsButton, "Options", "Opens the options. Same command: /ctl.")
+
+local refreshButton = redIconButton(guide, "Interface\\Buttons\\UI-RefreshButton")
+refreshButton:SetPoint("RIGHT", optionsButton, "LEFT", -6, 0)
 refreshButton:SetScript("OnClick", function()
     if ns.RefreshPlan then ns.RefreshPlan() end
 end)
 bindTip(refreshButton, "Recalculate plan", "Rebuilds the steps from your current location. Waypoints update while navigation is on.")
 
-local navButton = CreateFrame("Button", nil, guide)
-navButton:SetSize(22, 22)
+local navButton = redIconButton(guide, "Interface\\Minimap\\Tracking\\Target", "Interface\\Icons\\Ability_Hunter_SniperShot")
 navButton:SetPoint("RIGHT", refreshButton, "LEFT", -6, 0)
 if navButton.SetMotionScriptsWhileDisabled then navButton:SetMotionScriptsWhileDisabled(true) end
-local navIcon = navButton:CreateTexture(nil, "ARTWORK")
-navIcon:SetPoint("TOPLEFT", 1, -1)
-navIcon:SetPoint("BOTTOMRIGHT", -1, 1)
-local navDrawn = navIcon:SetTexture("Interface\\Minimap\\Tracking\\Target")
-if navDrawn == false then
-    navIcon:SetTexture("Interface\\Icons\\Ability_Hunter_SniperShot")
-    navIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-end
-navButton.icon = navIcon
-navButton:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
 navButton:SetScript("OnClick", function()
     if not ns.ToggleNavigation or not ns.ToggleNavigation() then return end
     if ns.PaintNavigation then ns.PaintNavigation() end
