@@ -33,9 +33,10 @@ function ns.CharDB()
     if not ns.ready then
         return {
             tracked = {}, chain = {}, decided = {},
-            ignored = {}, selected = {}, chainOff = {}, skipped = {},
+            ignored = {}, selected = {}, chainOff = {}, chainThrough = {}, skipped = {},
             refreshAccept = true, refreshTurnin = true, refreshObjective = true,
             autoTrack = true, autoChain = true,
+            navigating = false, guideShown = false,
         }
     end
     local db = ClearTheLogCharDB
@@ -49,12 +50,17 @@ function ns.CharDB()
     if type(db.ignored) ~= "table" then db.ignored = {} end
     if type(db.selected) ~= "table" then db.selected = {} end
     if type(db.chainOff) ~= "table" then db.chainOff = {} end
+    if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
     if type(db.skipped) ~= "table" then db.skipped = {} end
     if db.legacyMode == nil and not db.migrated and (db.mode == "ignore" or db.mode == "select") then
         db.legacyMode = db.mode
     end
     db.migrated = true
     if db.router ~= "tomtom" and db.router ~= "spf" then db.router = nil end
+    -- A saved router used to mean navigation was on. Remember that once.
+    if db.navigating == nil then db.navigating = db.router ~= nil end
+    if db.navigating ~= true or not db.router then db.navigating = false end
+    if db.guideShown ~= true then db.guideShown = false end
     if db.refreshAccept == nil then db.refreshAccept = true end
     if db.refreshTurnin == nil then db.refreshTurnin = true end
     if db.refreshObjective == nil then db.refreshObjective = true end
@@ -70,6 +76,10 @@ function ns.IsIncluded(questId)
 end
 
 function ns.ChainEnabled(questId)
+    if type(ns.ChainCutoff) == "function" and type(ns.ChainInfo) == "function" then
+        local chain = ns.ChainInfo(questId)
+        if chain then return ns.ChainCutoff(questId, chain) ~= questId end
+    end
     local db = ns.CharDB()
     if db.chain[questId] == nil then return db.chainOff[questId] ~= true end
     return db.chain[questId] == true
@@ -206,7 +216,9 @@ local function pruneSaved(rows)
     local live = {}
     for _, row in ipairs(rows) do live[row.id] = true end
     local db = ns.CharDB()
-    for _, bucket in ipairs({ db.tracked, db.chain, db.decided, db.ignored, db.selected, db.chainOff }) do
+    for _, bucket in ipairs({
+        db.tracked, db.chain, db.decided, db.ignored, db.selected, db.chainOff, db.chainThrough,
+    }) do
         for questId in pairs(bucket) do
             if not live[questId] then bucket[questId] = nil end
         end
@@ -327,6 +339,31 @@ function ns.RefreshPlan()
     ns.routeFrom = nil
     ns.routeOrigin = nil
     ns.RequestRefresh("plan")
+end
+
+function ns.ToggleNavigation()
+    if not ns.ready then return false end
+    local db = ns.CharDB()
+    if db.router ~= "tomtom" and db.router ~= "spf" then return false end
+    db.navigating = not db.navigating
+    ns.RefreshPlan()
+    return true
+end
+
+function ns.RestoreGuide()
+    if not ns.ready or ns.CharDB().guideShown ~= true then return end
+    ns.guideIntent = true
+    if type(ns.ShowGuide) == "function" then ns.ShowGuide() end
+end
+
+function ns.SaveGuideState()
+    ns.loggingOut = true
+    if not ns.ready then return end
+    local shown = ns.guideIntent == true
+    if ns.guide and type(ns.guide.IsShown) == "function" and ns.guide:IsShown() then
+        shown = true
+    end
+    ns.CharDB().guideShown = shown and true or false
 end
 
 function ns.RecalculateFromStep(index)
@@ -466,7 +503,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if ns.PlaceMinimap then ns.PlaceMinimap() end
     elseif event == "PLAYER_LOGIN" then
         ns.OpenDatabase()
+        ns.RestoreGuide()
         ns.RequestRefresh("login")
+    elseif event == "PLAYER_LOGOUT" then
+        ns.SaveGuideState()
     elseif event == "PLAYER_REGEN_ENABLED" then
         local deferred = ns.deferred
         ns.deferred = nil
@@ -486,6 +526,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 end)
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_LOGOUT")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -509,7 +550,7 @@ SlashCmdList.CLEARTHELOG = function(message)
     if argument == "reset" then
         local db = ns.CharDB()
         db.tracked, db.chain, db.decided = {}, {}, {}
-        db.ignored, db.selected, db.chainOff = {}, {}, {}
+        db.ignored, db.selected, db.chainOff, db.chainThrough = {}, {}, {}, {}
         db.legacyMode = nil
         db.mode = nil
         ns.Say("Quest selection reset. Quests in your log are in the guide again.")

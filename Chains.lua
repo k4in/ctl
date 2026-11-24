@@ -79,12 +79,92 @@ function ns.ChainInfo(questId)
 
     local total = #back + 1 + #forward
     if total < 2 then return nil end
+    local ids = {}
+    for _, id in ipairs(back) do ids[#ids + 1] = id end
+    ids[#ids + 1] = questId
+    for _, id in ipairs(forward) do ids[#ids + 1] = id end
     return {
         index = #back + 1,
         total = total,
         branched = branched,
         nextId = forward[1],
+        ids = ids,
     }
+end
+
+local function positionOf(ids, questId)
+    for index, id in ipairs(ids) do
+        if id == questId then return index end
+    end
+end
+
+-- The included follow-ups are always a prefix of the chain, from the log quest
+-- through chainThrough. Nil means every follow-up when the chain is on.
+function ns.ChainCutoff(questId, chain)
+    if type(chain) ~= "table" or type(chain.ids) ~= "table" then return questId end
+    local ids = chain.ids
+    local index = chain.index or positionOf(ids, questId) or 1
+    if index < 1 or index > #ids then index = 1 end
+    local db = ns.CharDB()
+    local through = db.chainThrough and db.chainThrough[questId]
+    if type(through) == "number" then
+        local at = positionOf(ids, through)
+        if at and at >= index then return ids[at] end
+    end
+    local chainOff = db.chainOff and db.chainOff[questId] == true
+    if db.chain[questId] == false or (chainOff and db.chain[questId] ~= true) then
+        return ids[index]
+    end
+    return ids[#ids]
+end
+
+function ns.ChainView(questId)
+    local chain = ns.ChainInfo(questId)
+    if not chain then return nil end
+    local cutoff = ns.ChainCutoff(questId, chain)
+    local cutoffPos = positionOf(chain.ids, cutoff) or chain.index
+    local members = {}
+    for index, id in ipairs(chain.ids) do
+        local level = ns.QuestNumber(id, "questLevel")
+        members[#members + 1] = {
+            id = id,
+            index = index,
+            total = chain.total,
+            name = ns.QuestName(id) or ("Quest " .. id),
+            level = (type(level) == "number" and level > 0) and level or nil,
+            dungeon = ns.IsDungeonQuest(id) and true or false,
+            role = index < chain.index and "past" or (index == chain.index and "current" or "followup"),
+            included = index >= chain.index and index <= cutoffPos,
+        }
+    end
+    return {
+        index = chain.index,
+        total = chain.total,
+        branched = chain.branched,
+        cutoff = cutoff,
+        label = ns.ChainLabel(chain),
+        members = members,
+    }
+end
+
+-- Click a later follow-up to include the chain through it.
+-- Click an included follow-up to drop that quest and every quest after it.
+function ns.AdjustChain(questId, clickedId)
+    local chain = ns.ChainInfo(questId)
+    if not chain or type(clickedId) ~= "number" then return false end
+    local clickPos = positionOf(chain.ids, clickedId)
+    if not clickPos or clickPos <= chain.index then return false end
+    local cutoffPos = positionOf(chain.ids, ns.ChainCutoff(questId, chain)) or chain.index
+    local newPos = clickPos > cutoffPos and clickPos or (clickPos - 1)
+    if newPos < chain.index then newPos = chain.index end
+    local through = chain.ids[newPos]
+    local db = ns.CharDB()
+    if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
+    db.chainThrough[questId] = through
+    db.chain[questId] = through ~= questId
+    db.chainOff[questId] = nil
+    db.decided[questId] = true
+    return true
 end
 
 function ns.ChainLabel(chain)

@@ -307,7 +307,7 @@ function ns.BuildPlan(rows, player)
             level = level,
             zone = (type(zone) == "string" and zone ~= "") and zone or "No zone",
             included = ns.IsIncluded(row.id),
-            chainEnabled = ns.ChainEnabled(row.id),
+            chainEnabled = chain and ns.ChainEnabled(row.id) or false,
             chain = chain,
             complete = row.complete,
             known = dbReady and ns.QuestExists(row.id) or false,
@@ -335,23 +335,38 @@ function ns.BuildPlan(rows, player)
                 if stop.kind == "turnin" then turnin = stop end
             end
 
-            local nextId = chain and ns.ChainEnabled(row.id) and ns.FollowupId(chain, inLog) or nil
-            if nextId and not addedFollow[nextId] and nextId ~= row.id then
-                addedFollow[nextId] = true
-                local followName = ns.QuestName(nextId) or ("Quest " .. nextId)
-                local ok, followStops = pcall(ns.CollectStops, nextId, {
-                    player = player,
-                    questName = followName,
-                    lines = {},
-                    followup = true,
-                    afterTurnin = row.id,
-                })
-                if ok and type(followStops) == "table" then
-                    attachFollowup(turnin, followStops, followName)
-                    countObjectives(followStops, objCount)
-                    for _, stop in ipairs(followStops) do
-                        stop.note = stop.note or "not in the log yet"
-                        stops[#stops + 1] = stop
+            local cutoff = chain and ns.ChainCutoff and ns.ChainCutoff(row.id, chain) or nil
+            if cutoff and cutoff ~= row.id then
+                local previousId = row.id
+                local previousTurnin = turnin
+                local passed = false
+                for _, id in ipairs(chain.ids or {}) do
+                    if not passed then
+                        if id == row.id then passed = true end
+                    else
+                        local nextId = ns.FollowupId({ nextId = id }, inLog)
+                        if not nextId or addedFollow[nextId] then break end
+                        addedFollow[nextId] = true
+                        local followName = ns.QuestName(nextId) or ("Quest " .. nextId)
+                        local ok, followStops = pcall(ns.CollectStops, nextId, {
+                            player = player,
+                            questName = followName,
+                            lines = {},
+                            followup = true,
+                            afterTurnin = previousId,
+                        })
+                        if not ok or type(followStops) ~= "table" then break end
+                        attachFollowup(previousTurnin, followStops, followName)
+                        countObjectives(followStops, objCount)
+                        local followTurnin
+                        for _, stop in ipairs(followStops) do
+                            stop.note = stop.note or "not in the log yet"
+                            stops[#stops + 1] = stop
+                            if stop.kind == "turnin" then followTurnin = stop end
+                        end
+                        previousId = nextId
+                        previousTurnin = followTurnin
+                        if nextId == cutoff then break end
                     end
                 end
             end

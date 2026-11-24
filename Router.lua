@@ -34,12 +34,14 @@ end
 
 function ns.ShouldPushRoute(reasons)
     local db = ns.CharDB()
+    local provider = db.router == "tomtom" or db.router == "spf"
+    if not provider or db.navigating ~= true then
+        return ns.lastRouteRouter ~= nil
+    end
     if reasons.step or reasons.manual or reasons.router or reasons.abandon
-        or reasons.plan or reasons.skip then
+        or reasons.plan or reasons.skip or reasons.open or reasons.login then
         return true
     end
-    if reasons.open and db.router then return true end
-    if not db.router then return false end
     if reasons.accept and db.refreshAccept then return true end
     if reasons.turnin and db.refreshTurnin then return true end
     if reasons.objective and db.refreshObjective then return true end
@@ -199,7 +201,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
     if type(fromIndex) ~= "number" or fromIndex < 1 then fromIndex = 1 end
     if #steps > 0 and fromIndex > #steps then fromIndex = #steps end
 
-    if not db.router then
+    if not db.router or db.navigating ~= true then
         if ns.lastRouteRouter then
             clearSpf()
             clearTomTom()
