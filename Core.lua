@@ -69,7 +69,7 @@ function ns.CharDB()
             tracked = {}, chain = {}, decided = {},
             ignored = {}, selected = {}, chainOff = {}, chainThrough = {}, skipped = {},
             refreshAccept = true, refreshTurnin = true, refreshObjective = true,
-            autoTrack = true, autoChain = true,
+            autoTrack = true,
             navigating = false, guideShown = false,
         }
     end
@@ -99,7 +99,7 @@ function ns.CharDB()
     if db.refreshTurnin == nil then db.refreshTurnin = true end
     if db.refreshObjective == nil then db.refreshObjective = true end
     if db.autoTrack == nil then db.autoTrack = true end
-    if db.autoChain == nil then db.autoChain = true end
+    db.autoChain = nil
     return db
 end
 
@@ -147,8 +147,6 @@ function ns.SetIncluded(questId, included)
     local on = included and true or false
     db.tracked[questId] = on
     db.decided[questId] = true
-    -- Checking a quest uses the chain option. Unchecking always drops the follow-ups.
-    ns.SetChainFollowups(questId, on and db.autoChain == true)
 end
 
 function ns.SetAllQuests(included)
@@ -175,7 +173,7 @@ function ns.DecideQuest(questId)
     if fresh then
         if not db.decided[questId] then
             db.tracked[questId] = db.autoTrack and true or false
-            db.chain[questId] = db.autoChain and true or false
+            db.chain[questId] = false
             db.decided[questId] = true
         end
         ns.fresh[questId] = nil

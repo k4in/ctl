@@ -329,7 +329,6 @@ addToggle("After completing an objective", -302, "refreshObjective", "After an o
 section(options, "New quests", -336)
 
 addToggle("Add new quests to the guide", -360, "autoTrack", "Add automatically", "A quest you accept is added to the guide.")
-addToggle("Include the quest chain", -386, "autoChain", "Chain automatically", "Checking a quest in the log includes every follow-up. A newly accepted quest does the same. Add all uses this choice.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -990,7 +989,7 @@ local addAll = CreateFrame("Button", nil, quests, "UIPanelButtonTemplate")
 addAll:SetSize(120, 22)
 addAll:SetPoint("TOPLEFT", 24, -44)
 addAll:SetText("Add all")
-bindTip(addAll, "Add all", "Puts every quest in the log into the guide. Follow-ups are included when Include the quest chain is on.")
+bindTip(addAll, "Add all", "Puts every quest in the log into the guide. Follow-ups stay as you set them on each chain.")
 addAll:SetScript("OnClick", function()
     if ns.SetAllQuests then ns.SetAllQuests(true) end
 end)
@@ -999,7 +998,7 @@ local removeAll = CreateFrame("Button", nil, quests, "UIPanelButtonTemplate")
 removeAll:SetSize(120, 22)
 removeAll:SetPoint("LEFT", addAll, "RIGHT", 8, 0)
 removeAll:SetText("Remove all")
-bindTip(removeAll, "Remove all", "Takes every quest out of the guide, including its follow-ups.")
+bindTip(removeAll, "Remove all", "Takes every logged quest out of the guide. Follow-ups leave the route with that quest.")
 removeAll:SetScript("OnClick", function()
     if ns.SetAllQuests then ns.SetAllQuests(false) end
 end)
@@ -1009,7 +1008,7 @@ questHint:SetPoint("TOPLEFT", 24, -72)
 questHint:SetPoint("RIGHT", quests, "RIGHT", -24, 0)
 questHint:SetJustifyH("LEFT")
 questHint:SetWordWrap(true)
-questHint:SetText("Check a quest to put it in the guide. Expand a chain to choose its follow-ups.")
+questHint:SetText("Check a quest to put it in the guide. Toggle all turns every later quest in its chain on or off.")
 
 local questScroll = scroller(quests, "ClearTheLogQuestScroll", 16, -116, -34, 36)
 local questRows = {}
@@ -1220,6 +1219,32 @@ local function questRow(parent)
     row.chainLabel:SetJustifyH("RIGHT")
     row.chainLabel:Hide()
 
+    row.toggleAll = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    row.toggleAll:SetSize(100, 20)
+    row.toggleAll:SetPoint("RIGHT", row.chainLabel, "LEFT", -4, 0)
+    row.toggleAll:SetText("Toggle all")
+    local toggleLabel = row.toggleAll:GetFontString()
+    if toggleLabel then toggleLabel:SetFontObject("GameFontHighlightSmall") end
+    row.toggleAll:SetScript("OnClick", function()
+        if silent or not row.questId then return end
+        if ns.ToggleChainFollowups then ns.ToggleChainFollowups(row.questId) end
+        if ns.RequestRefresh then ns.RequestRefresh("manual") end
+    end)
+    row.toggleAll:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Toggle all", 1, 0.82, 0)
+        local allOn = ns.AllFollowupsIncluded and ns.AllFollowupsIncluded(row.questId)
+        if allOn then
+            GameTooltip:AddLine("Turns off every later quest in this chain.", 1, 1, 1, true)
+        else
+            GameTooltip:AddLine("Turns on every later quest in this chain.", 1, 1, 1, true)
+        end
+        GameTooltip:AddLine("The quest in your log stays as it is.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    row.toggleAll:SetScript("OnLeave", hideQuestTip)
+    row.toggleAll:Hide()
+
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     clip(row.name)
 
@@ -1337,15 +1362,22 @@ local function fillQuests(plan)
                 openChains[quest.id] = nil
             end
 
+            local hasLater = chain and type(chain.index) == "number" and type(chain.total) == "number" and chain.index < chain.total
             row.name:ClearAllPoints()
             row.name:SetPoint("LEFT", row.check, "RIGHT", 2, 0)
             row.hit:ClearAllPoints()
             row.hit:SetPoint("TOPLEFT", row.check, "TOPRIGHT", 0, 0)
             row.hit:SetPoint("BOTTOMLEFT", row.check, "BOTTOMRIGHT", 0, 0)
-            if chain then
+            if hasLater then
+                row.toggleAll:Show()
+                row.name:SetPoint("RIGHT", row.toggleAll, "LEFT", -6, 0)
+                row.hit:SetPoint("RIGHT", row.toggleAll, "LEFT", -4, 0)
+            elseif chain then
+                row.toggleAll:Hide()
                 row.name:SetPoint("RIGHT", row.chainLabel, "LEFT", -6, 0)
                 row.hit:SetPoint("RIGHT", row.chainLabel, "LEFT", -4, 0)
             else
+                row.toggleAll:Hide()
                 row.name:SetPoint("RIGHT", row, "RIGHT", -8, 0)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             end
@@ -1441,7 +1473,7 @@ end
 questsButton:SetScript("OnClick", function()
     if quests:IsShown() then quests:Hide() else quests:Show() end
 end)
-bindTip(questsButton, "Quests", "Chooses which quests are in the guide. Expand a chain to choose its follow-ups.")
+bindTip(questsButton, "Quests", "Chooses which quests are in the guide. Toggle all turns every later quest in a chain on or off.")
 
 function ns.ToggleQuests()
     if quests:IsShown() then quests:Hide() else quests:Show() end

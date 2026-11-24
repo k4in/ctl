@@ -167,6 +167,27 @@ function ns.AdjustChain(questId, clickedId)
     return true
 end
 
+function ns.AllFollowupsIncluded(questId)
+    local chain = ns.ChainInfo(questId)
+    if not chain or type(chain.ids) ~= "table" then return false end
+    local index = chain.index or positionOf(chain.ids, questId) or 1
+    local last = chain.ids[#chain.ids]
+    if not last or index >= #chain.ids then return false end
+    return ns.ChainCutoff(questId, chain) == last
+end
+
+-- Turns every later quest on, or off when they are already all on.
+-- The log quest itself stays on its own checkbox.
+function ns.ToggleChainFollowups(questId)
+    local chain = ns.ChainInfo(questId)
+    if type(questId) ~= "number" or not chain or type(chain.ids) ~= "table" then return false end
+    local index = chain.index or positionOf(chain.ids, questId) or 1
+    if index >= #chain.ids then return false end
+    if type(ns.SetChainFollowups) ~= "function" then return false end
+    ns.SetChainFollowups(questId, not ns.AllFollowupsIncluded(questId))
+    return true
+end
+
 function ns.ChainLabel(chain)
     if not chain then return nil end
     local label = string.format("Chain %d/%d", chain.index, chain.total)
