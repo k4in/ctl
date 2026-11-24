@@ -26,6 +26,22 @@ function ns.DBReady()
     return ns.dbOpen == true
 end
 
+local dungeonAreas
+
+local function loadDungeonAreas(private)
+    dungeonAreas = {}
+    local dungeons = private and private.dungeons
+    if type(dungeons) ~= "table" then return end
+    for areaId, entry in pairs(dungeons) do
+        if type(areaId) == "number" and areaId > 0 then dungeonAreas[areaId] = true end
+        if type(entry) == "table" and type(entry[2]) == "table" then
+            for _, alt in ipairs(entry[2]) do
+                if type(alt) == "number" and alt > 0 then dungeonAreas[alt] = true end
+            end
+        end
+    end
+end
+
 function ns.OpenDatabase()
     if ns.dbOpen ~= nil then return ns.dbOpen end
     if type(LibQuestieDB) ~= "table" or type(QuestDB) ~= "table" or type(QuestDB.Exists) ~= "function" then
@@ -52,9 +68,42 @@ function ns.OpenDatabase()
     else
         uiMapToArea, areaToUi = {}, {}
     end
+    loadDungeonAreas(private)
 
     ns.dbOpen = true
     return true
+end
+
+-- 81 dungeon, 85 heroic. 62/88/89 are raids and stay unmarked.
+function ns.QuestTagId(questId)
+    if type(questId) ~= "number" or questId <= 0 then return nil end
+    if C_QuestLog and C_QuestLog.GetQuestTagInfo then
+        local ok, info = pcall(C_QuestLog.GetQuestTagInfo, questId)
+        if ok and type(info) == "table" then
+            local tag = ns.Plain(info.tagID)
+            if type(tag) == "number" and tag > 0 then return tag end
+        end
+    end
+    if GetQuestTagInfo then
+        local ok, first, second = pcall(GetQuestTagInfo, questId)
+        if ok then
+            first, second = ns.Plain(first), ns.Plain(second)
+            if type(first) == "number" and first > 0 then return first end
+            if type(second) == "number" and second > 0 then return second end
+        end
+    end
+    return nil
+end
+
+function ns.IsDungeonQuest(questId)
+    if type(questId) ~= "number" or questId <= 0 then return false end
+    local tag = ns.QuestTagId(questId)
+    if tag == 62 or tag == 88 or tag == 89 then return false end
+    if tag == 81 or tag == 85 then return true end
+    if ns.dbOpen == nil then ns.OpenDatabase() end
+    if type(dungeonAreas) ~= "table" then return false end
+    local zone = ns.QuestNumber(questId, "zoneOrSort")
+    return zone ~= nil and dungeonAreas[zone] == true
 end
 
 function ns.QuestCall(questId, field)
@@ -309,7 +358,14 @@ end
 
 local function norm(text)
     if type(text) ~= "string" then return "" end
-    return text:lower()
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+    text = text:lower()
+    text = text:gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("%s*%(%s*%d+%s*/%s*%d+%s*%)%s*$", "")
+    text = text:gsub("%s+%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("^%s*%d+%s*/%s*%d+%s+", "")
+    text = text:gsub("%s+", " ")
+    return (text:match("^%s*(.-)%s*$")) or ""
 end
 
 local function preferZone(questId)
@@ -320,6 +376,7 @@ end
 
 local function addStop(stops, stop)
     stop.areaId = stop.areaId or 0
+    if stop.questId and ns.IsDungeonQuest(stop.questId) then stop.dungeon = true end
     stops[#stops + 1] = stop
 end
 
@@ -337,26 +394,53 @@ function ns.CollectStops(questId, spec)
     local lines = spec.lines or {}
     local seen = {}
 
-    local function claimed(text)
+    -- Log text is localized and often carries a counter. Questie text is not.
+    -- A unique text or NPC-name match wins. When the two lists are the same
+    -- length, the remaining lines pair in order, which is how a finished
+    -- "talk to this person" objective drops out even if the wording differs.
+    local function scoreLine(line, key, sourceName)
+        local lineKey = norm(line.text)
+        if lineKey == "" then return 0 end
+        if key ~= "" and lineKey == key then return 100 end
+        if key ~= "" and #key >= 6 and #lineKey >= 6
+            and (lineKey:find(key, 1, true) or key:find(lineKey, 1, true)) then
+            return 80
+        end
+        local name = norm(sourceName)
+        if #name >= 4 and lineKey:find(name, 1, true) then return 60 end
+        return 0
+    end
+
+    local function matchLine(text, sourceName)
         local key = norm(text)
-        if key == "" then return false end
+        local best, bestScore, ties
         for _, line in ipairs(lines) do
-            if not line.used and norm(line.text) == key then
-                line.used = true
-                if line.finished then return true end
-                return false
+            if not line.used then
+                local score = scoreLine(line, key, sourceName)
+                if score > 0 and (not bestScore or score > bestScore) then
+                    best, bestScore, ties = line, score, false
+                elseif bestScore and score == bestScore then
+                    ties = true
+                end
             end
         end
-        return false
+        if ties or not best then return nil end
+        return best
     end
+
+    local queue = {}
 
     local function pushObjective(text, point, sourceName)
         if spec.complete then return end
-        if claimed(text) then return end
         local key = norm(text)
         if key ~= "" and seen[key] then return end
         if key ~= "" then seen[key] = true end
-        addStop(stops, {
+        local line = matchLine(text, sourceName)
+        if line then
+            line.used = true
+            if line.finished then return end
+        end
+        queue[#queue + 1] = {
             questId = questId,
             questName = questName,
             kind = "objective",
@@ -367,7 +451,8 @@ function ns.CollectStops(questId, spec)
             followup = spec.followup,
             afterTurnin = spec.afterTurnin,
             sourceName = sourceName,
-        })
+            unmatched = line == nil,
+        }
     end
 
     if ns.QuestExists(questId) and not spec.complete then
@@ -433,11 +518,47 @@ function ns.CollectStops(questId, spec)
         end
     end
 
+    local unused = {}
+    for _, line in ipairs(lines) do
+        if not line.used then unused[#unused + 1] = line end
+    end
+    local pending = {}
+    for index, stop in ipairs(queue) do
+        if stop.unmatched then pending[#pending + 1] = index end
+    end
+    if #pending > 0 and #pending == #unused then
+        local drop = {}
+        for index, queueIndex in ipairs(pending) do
+            local line = unused[index]
+            line.used = true
+            if line.finished then drop[queueIndex] = true end
+        end
+        if next(drop) then
+            local kept = {}
+            for index, stop in ipairs(queue) do
+                if not drop[index] then kept[#kept + 1] = stop end
+            end
+            queue = kept
+        end
+    end
+    for _, stop in ipairs(queue) do
+        stop.unmatched = nil
+        addStop(stops, stop)
+    end
+
     if not spec.followup and not spec.complete then
         for _, line in ipairs(lines) do
             if not line.used and not line.finished and type(line.text) == "string" and line.text ~= "" then
                 line.used = true
-                pushObjective(line.text, nil)
+                addStop(stops, {
+                    questId = questId,
+                    questName = questName,
+                    kind = "objective",
+                    text = line.text,
+                    areaId = 0,
+                    followup = spec.followup,
+                    afterTurnin = spec.afterTurnin,
+                })
             end
         end
     end

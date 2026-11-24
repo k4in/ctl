@@ -2,6 +2,8 @@ local addonName, ns = ...
 
 ns.addonName = addonName
 ns.TITLE = "Clear the Log"
+ns.GUIDE_LIMIT = 10
+ns.ROUTE_STEPS = 5
 
 -- Mainline hands addons opaque secret values. Comparing or storing them as
 -- table keys throws. Anything secret becomes nil and the caller skips it.
@@ -31,7 +33,7 @@ function ns.CharDB()
     if not ns.ready then
         return {
             tracked = {}, chain = {}, decided = {},
-            ignored = {}, selected = {}, chainOff = {},
+            ignored = {}, selected = {}, chainOff = {}, skipped = {},
             refreshAccept = true, refreshTurnin = true, refreshObjective = true,
             autoTrack = true, autoChain = true,
         }
@@ -47,6 +49,7 @@ function ns.CharDB()
     if type(db.ignored) ~= "table" then db.ignored = {} end
     if type(db.selected) ~= "table" then db.selected = {} end
     if type(db.chainOff) ~= "table" then db.chainOff = {} end
+    if type(db.skipped) ~= "table" then db.skipped = {} end
     if db.legacyMode == nil and not db.migrated and (db.mode == "ignore" or db.mode == "select") then
         db.legacyMode = db.mode
     end
@@ -160,6 +163,7 @@ local function readLog()
                             if type(objective) == "table" then
                                 local text = ns.Plain(objective.text)
                                 local finished = ns.Plain(objective.finished)
+                                if finished == nil then finished = ns.Plain(objective.completed) end
                                 if text == nil and finished == nil then
                                     secret = true
                                 else
@@ -241,7 +245,10 @@ local function takeSnapshot(rows)
 end
 
 local pending = {}
-local IMMEDIATE = { manual = true, router = true, step = true, open = true, draw = true }
+local IMMEDIATE = {
+    manual = true, router = true, step = true, open = true, draw = true,
+    plan = true, skip = true,
+}
 
 local function combatLocked()
     return InCombatLockdown and InCombatLockdown()
@@ -275,6 +282,64 @@ function ns.RouteFrom(index)
     ns.RequestRefresh("step")
 end
 
+function ns.SkipStep(index)
+    if not ns.ready then return end
+    local plan = ns.lastPlan
+    local steps = plan and plan.steps
+    local stop = steps and steps[index]
+    if not stop or stop.skipped or not ns.StepKey then return end
+    if combatLocked() then
+        ns.CharDB().skipped[ns.StepKey(stop)] = true
+        ns.routeFrom = nil
+        ns.RequestRefresh("skip")
+        return
+    end
+    ns.CharDB().skipped[ns.StepKey(stop)] = true
+    table.remove(steps, index)
+    stop.skipped = true
+    steps[#steps + 1] = stop
+    local start = ns.windowStart or 1
+    if type(start) ~= "number" or start < 1 then start = 1 end
+    if start > index then start = start - 1 end
+    if #steps > 0 and start > #steps then start = #steps end
+    ns.windowStart = start
+    ns.routeFrom = nil
+    if ns.PushRoute then ns.PushRoute(plan, start, { skip = true }) end
+    if ns.Render then ns.Render(plan, ns.lastErr) end
+end
+
+function ns.UndoSkip(index)
+    if not ns.ready then return end
+    local plan = ns.lastPlan
+    local stop = plan and plan.steps and plan.steps[index]
+    if not stop or not ns.StepKey then return end
+    ns.CharDB().skipped[ns.StepKey(stop)] = nil
+    ns.routeFrom = nil
+    ns.RequestRefresh("plan")
+end
+
+function ns.RefreshPlan()
+    if not ns.ready then return end
+    ns.routeFrom = nil
+    ns.RequestRefresh("plan")
+end
+
+local function pruneSkips(rows, plan)
+    local skipped = ns.CharDB().skipped
+    if type(skipped) ~= "table" then return end
+    local live = {}
+    for _, row in ipairs(rows or {}) do
+        if type(row.id) == "number" then live[row.id] = true end
+    end
+    for _, stop in ipairs(plan and plan.steps or {}) do
+        if type(stop.questId) == "number" then live[stop.questId] = true end
+    end
+    for key in pairs(skipped) do
+        local questId = tonumber(tostring(key):match("^(%d+)"))
+        if not questId or not live[questId] then skipped[key] = nil end
+    end
+end
+
 function ns.Refresh(reasons)
     if not ns.ready then return end
     reasons = reasons or {}
@@ -300,12 +365,22 @@ function ns.Refresh(reasons)
     if reasons.removed and not reasons.turnin then reasons.abandon = true end
 
     local plan = ns.BuildPlan(rows, ns.PlayerLocation())
+    pruneSkips(rows, plan)
     ns.lastPlan, ns.lastErr = plan, err
 
     local fromIndex = 1
     local directed = reasons.step
-        and not (reasons.accept or reasons.turnin or reasons.objective or reasons.manual or reasons.router)
+        and not (reasons.accept or reasons.turnin or reasons.objective or reasons.manual
+            or reasons.router or reasons.plan or reasons.skip)
     if directed and type(routeFrom) == "number" then fromIndex = routeFrom end
+
+    local resetWindow = reasons.plan or reasons.skip or reasons.accept or reasons.turnin
+        or reasons.objective or reasons.manual or reasons.router or reasons.abandon or reasons.login
+    if directed then
+        ns.windowStart = fromIndex
+    elseif resetWindow or type(ns.windowStart) ~= "number" then
+        ns.windowStart = 1
+    end
 
     if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
         ns.PushRoute(plan, fromIndex, reasons)

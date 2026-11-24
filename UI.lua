@@ -23,7 +23,12 @@ local function bindTip(widget, title, body)
     widget:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
-local function chrome(name, width, height, posKey, defaultX, defaultY, rightInset)
+local function chrome(name, width, height, posKey, defaultX, defaultY, rightInset, limits)
+    limits = limits or {}
+    local minW, minH = limits.minW or 360, limits.minH or 240
+    local maxW, maxH = limits.maxW or 1200, limits.maxH or 1000
+    local sizeKey = limits.sizeKey or (posKey .. "Size")
+
     local frame = CreateFrame("Frame", name, UIParent, "BackdropTemplate")
     frame:SetSize(width, height)
     frame:SetPoint("CENTER", defaultX or 0, defaultY or 0)
@@ -31,9 +36,16 @@ local function chrome(name, width, height, posKey, defaultX, defaultY, rightInse
     frame:SetToplevel(true)
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
+    frame:SetResizable(true)
     frame:EnableMouse(true)
     frame:SetBackdrop(BACKDROP)
     frame:Hide()
+    if frame.SetResizeBounds then
+        frame:SetResizeBounds(minW, minH, maxW, maxH)
+    else
+        if frame.SetMinResize then frame:SetMinResize(minW, minH) end
+        if frame.SetMaxResize then frame:SetMaxResize(maxW, maxH) end
+    end
     tinsert(UISpecialFrames, name)
 
     local titleBar = CreateFrame("Frame", nil, frame)
@@ -63,13 +75,37 @@ local function chrome(name, width, height, posKey, defaultX, defaultY, rightInse
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -2, -2)
 
+    local grip = CreateFrame("Button", nil, frame)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -4, 4)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then frame:StartSizing("BOTTOMRIGHT") end
+    end)
+    grip:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        frame:StopMovingOrSizing()
+        if not ns.ready then return end
+        ns.CharDB()[sizeKey] = { frame:GetWidth(), frame:GetHeight() }
+    end)
+
     local placed = false
     frame:SetScript("OnShow", function(self)
         if not placed and ns.ready then
-            local pos = ns.CharDB()[posKey]
+            local db = ns.CharDB()
+            local pos = db[posKey]
             if type(pos) == "table" and type(pos[1]) == "string" and type(pos[2]) == "string" then
                 self:ClearAllPoints()
                 self:SetPoint(pos[1], UIParent, pos[2], pos[3] or 0, pos[4] or 0)
+            end
+            local size = db[sizeKey]
+            if type(size) == "table" and type(size[1]) == "number" and type(size[2]) == "number" then
+                self:SetSize(
+                    math.max(minW, math.min(maxW, size[1])),
+                    math.max(minH, math.min(maxH, size[2]))
+                )
             end
             placed = true
         end
@@ -107,6 +143,8 @@ local function styleRadio(radio)
     texCoord(radio:GetPushedTexture(), 0, 0.25, 0, 1)
 end
 
+local fit
+
 local function scroller(parent, name, x, yTop, right, yBottom)
     local scroll = CreateFrame("ScrollFrame", name, parent, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", x, yTop)
@@ -115,10 +153,14 @@ local function scroller(parent, name, x, yTop, right, yBottom)
     child:SetSize(1, 1)
     scroll:SetScrollChild(child)
     scroll.child = child
+    scroll:SetScript("OnSizeChanged", function(self)
+        if self.contentHeight then fit(self, self.contentHeight) end
+    end)
     return scroll
 end
 
-local function fit(scroll, height)
+function fit(scroll, height)
+    scroll.contentHeight = height
     local width = scroll:GetWidth()
     if width < 80 then width = 420 end
     scroll.child:SetWidth(width)
@@ -135,7 +177,9 @@ local function clip(line)
     if line.SetMaxLines then line:SetMaxLines(1) end
 end
 
-local options = chrome("ClearTheLogOptions", 480, 484, "posOptions", -260, 40)
+local options = chrome("ClearTheLogOptions", 480, 484, "posOptions", -260, 40, nil, {
+    minW = 440, minH = 460, sizeKey = "sizeOptions",
+})
 options.title:SetText(ns.TITLE)
 options.subtitle:SetText("/ctl")
 ns.options = options
@@ -180,15 +224,15 @@ local function addRadio(text, value, y, tipTitle, tipBody)
 end
 
 addRadio("Keins", "none", -70, "Kein Routing", "Der Guide zeigt die Schritte, setzt aber keinen Wegpunkt.")
-addRadio("TomTom", "tomtom", -96, "TomTom", "Der Pfeil zeigt auf den nächsten Schritt mit Koordinaten.")
-addRadio("Shortest Path Forever", "spf", -122, "Shortest Path Forever", "Die folgenden Schritte werden als eine Reise geplant, inklusive Flug, Boot und Portal.")
+addRadio("TomTom", "tomtom", -96, "TomTom", "Wegpunkte für die nächsten 5 Schritte. Der Pfeil zeigt auf den ersten.")
+addRadio("Shortest Path Forever", "spf", -122, "Shortest Path Forever", "Die nächsten 5 Schritte werden als eine Reise geplant, inklusive Flug, Boot und Portal.")
 
 local routerHint = options:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 routerHint:SetPoint("TOPLEFT", 28, -154)
 routerHint:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerHint:SetJustifyH("LEFT")
 routerHint:SetWordWrap(true)
-routerHint:SetText("TomTom: Pfeil auf den nächsten Schritt. Shortest Path Forever: die nächsten Schritte als eine Reise. Nur eins von beiden, oder keins.")
+routerHint:SetText("TomTom und Shortest Path bekommen Wegpunkte für die nächsten 5 Schritte. Nur eins von beiden, oder keins.")
 
 routerStatus:SetPoint("TOPLEFT", 28, -198)
 routerStatus:SetPoint("RIGHT", options, "RIGHT", -28, 0)
@@ -281,7 +325,9 @@ options.onPresent = function()
     ns.PaintOptions()
 end
 
-local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 124)
+local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 124, {
+    minW = 380, minH = 320, sizeKey = "sizeGuide",
+})
 guide.title:SetText("Route")
 guide.subtitle:SetText("/ctl route")
 ns.guide = guide
@@ -292,26 +338,35 @@ questsButton:SetPoint("TOPRIGHT", -36, -12)
 questsButton:SetText("Quests")
 guide.subtitle:SetPoint("RIGHT", questsButton, "LEFT", -8, 0)
 
-local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 72)
+local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 100)
 local stepRows = {}
 
 local summary = guide:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-summary:SetPoint("BOTTOMLEFT", 24, 50)
-summary:SetPoint("RIGHT", guide, "RIGHT", -24, 0)
+summary:SetPoint("BOTTOMLEFT", 24, 78)
+summary:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
 summary:SetJustifyH("LEFT")
 clip(summary)
 
 local routeLine = guide:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-routeLine:SetPoint("BOTTOMLEFT", 24, 34)
-routeLine:SetPoint("RIGHT", guide, "RIGHT", -24, 0)
+routeLine:SetPoint("BOTTOMLEFT", 24, 62)
+routeLine:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
 routeLine:SetJustifyH("LEFT")
 clip(routeLine)
 
 local warning = guide:CreateFontString(nil, "ARTWORK", "GameFontRedSmall")
-warning:SetPoint("BOTTOMLEFT", 24, 18)
-warning:SetPoint("RIGHT", guide, "RIGHT", -24, 0)
+warning:SetPoint("BOTTOMLEFT", 24, 46)
+warning:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
 warning:SetJustifyH("LEFT")
 clip(warning)
+
+local refreshButton = CreateFrame("Button", nil, guide, "UIPanelButtonTemplate")
+refreshButton:SetSize(170, 22)
+refreshButton:SetPoint("BOTTOMLEFT", 16, 12)
+refreshButton:SetText("Plan neu berechnen")
+refreshButton:SetScript("OnClick", function()
+    if ns.RefreshPlan then ns.RefreshPlan() end
+end)
+bindTip(refreshButton, "Plan neu berechnen", "Berechnet die Schritte vom aktuellen Ort neu und setzt die Route.")
 
 local function stepRow(parent)
     local row = CreateFrame("Frame", nil, parent)
@@ -328,14 +383,39 @@ local function stepRow(parent)
     row.hover:SetColorTexture(1, 1, 1, 0.05)
     row.hover:Hide()
 
+    row.action = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    row.action:SetSize(118, 20)
+    row.action:SetPoint("RIGHT", -4, 0)
+    row.action:Hide()
+    row.action:SetScript("OnClick", function()
+        if silent or not row.index or not row.stop then return end
+        if row.stop.skipped then
+            if ns.UndoSkip then ns.UndoSkip(row.index) end
+        elseif ns.SkipStep then
+            ns.SkipStep(row.index)
+        end
+    end)
+    row.action:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if row.stop and row.stop.skipped then
+            GameTooltip:SetText("Rückgängig", 1, 0.82, 0)
+            GameTooltip:AddLine("Nimmt das Überspringen zurück und berechnet den Plan vom aktuellen Ort neu.", 1, 1, 1, true)
+        else
+            GameTooltip:SetText("Überspringen", 1, 0.82, 0)
+            GameTooltip:AddLine("Setzt diesen Schritt ans Ende des Plans.", 1, 1, 1, true)
+        end
+        GameTooltip:Show()
+    end)
+    row.action:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
     row.line = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.line:SetPoint("TOPLEFT", 8, -4)
-    row.line:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+    row.line:SetPoint("RIGHT", row, "RIGHT", -128, 0)
     clip(row.line)
 
     row.sub = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     row.sub:SetPoint("TOPLEFT", row.line, "BOTTOMLEFT", 16, -2)
-    row.sub:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+    row.sub:SetPoint("RIGHT", row, "RIGHT", -128, 0)
     clip(row.sub)
 
     row:SetScript("OnEnter", function()
@@ -387,31 +467,47 @@ end
 
 local function fillSteps(steps)
     local list = steps or {}
-    if #list == 0 then
+    local indexes = ns.VisibleStepIndexes and ns.VisibleStepIndexes(list) or {}
+    if #list == 0 or #indexes == 0 then
         placeRows(stepScroll, stepRows, 1, stepRow, ROW_STEP)
         local row = stepRows[1]
         row.index = nil
         row.stop = nil
         row.current:Hide()
+        row.action:Hide()
         row.line:SetText("Keine Schritte. Der Log ist leer, oder keine Quest ist im Guide.")
         row.line:SetTextColor(0.7, 0.7, 0.7)
         row.sub:SetText("")
-        return
+        return 0
     end
 
     local focus = ns.activeStep
-    if type(focus) ~= "number" or not list[focus] then focus = 1 end
-    placeRows(stepScroll, stepRows, #list, stepRow, ROW_STEP)
-    for index, stop in ipairs(list) do
-        local row = stepRows[index]
+    if type(focus) ~= "number" or not list[focus] then focus = indexes[1] end
+    local current = indexes[1]
+    placeRows(stepScroll, stepRows, #indexes, stepRow, ROW_STEP)
+    for rowIndex, index in ipairs(indexes) do
+        local stop = list[index]
+        local row = stepRows[rowIndex]
         row.index = index
         row.stop = stop
         row.hover:Hide()
         row.current:SetShown(index == focus)
+        if stop.skipped then
+            row.action:SetText("Rückgängig")
+            row.action:Show()
+        elseif index == current then
+            row.action:SetText("Überspringen")
+            row.action:Show()
+        else
+            row.action:Hide()
+        end
         local tag = stop.kind == "turnin" and "Abgabe" or "Ziel"
         if stop.followup then tag = tag .. " · Folgequest" end
-        row.line:SetText(string.format("%d.  %s: %s", index, tag, stop.text or ""))
-        if index == focus then
+        local mark = stop.dungeon and "|cffffcc00D|r  " or ""
+        row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
+        if stop.skipped then
+            row.line:SetTextColor(0.55, 0.55, 0.55)
+        elseif index == focus then
             row.line:SetTextColor(1, 0.82, 0)
         elseif stop.followup then
             row.line:SetTextColor(0.95, 0.8, 0.45)
@@ -428,11 +524,13 @@ local function fillSteps(steps)
         if coord then bits[#bits + 1] = coord end
         if stop.questName and stop.questName ~= "" then bits[#bits + 1] = stop.questName end
         if stop.note and stop.note ~= "" then bits[#bits + 1] = stop.note end
+        if stop.skipped then bits[#bits + 1] = "übersprungen" end
         if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
             bits[#bits + 1] = "ohne Karte"
         end
         row.sub:SetText(table.concat(bits, "   ·   "))
     end
+    return #indexes
 end
 
 local function routeSentence()
@@ -462,14 +560,14 @@ function ns.RenderGuide(plan, err)
         silent = false
         return
     end
-    fillSteps(plan.steps)
+    local shown = fillSteps(plan.steps)
     local included = 0
     for _, quest in ipairs(plan.quests or {}) do
         if quest.included then included = included + 1 end
     end
     summary:SetText(string.format(
-        "%d Schritte · %d von %d Quests im Guide",
-        #(plan.steps or {}), included, #(plan.quests or {})
+        "%d von %d Schritten · %d von %d Quests im Guide",
+        shown, #(plan.steps or {}), included, #(plan.quests or {})
     ))
     local text, bad = routeSentence()
     routeLine:SetText(text or "")
@@ -493,7 +591,9 @@ function ns.ToggleGuide()
     if guide:IsShown() then guide:Hide() else guide:Show() end
 end
 
-local quests = chrome("ClearTheLogQuests", 500, 540, "posQuests", 0, -10)
+local quests = chrome("ClearTheLogQuests", 500, 540, "posQuests", 0, -10, nil, {
+    minW = 400, minH = 280, sizeKey = "sizeQuests",
+})
 quests.title:SetText("Quests")
 quests.subtitle:SetText("Log")
 ns.quests = quests
@@ -541,6 +641,7 @@ local function questRow(parent)
         GameTooltip:SetText(row.tipName or "Quest", 1, 1, 1)
         GameTooltip:AddLine("Quest-ID " .. row.questId, 0.7, 0.7, 0.7)
         if row.known == false then GameTooltip:AddLine("Nicht in QuestieDB.", 0.8, 0.8, 0.8) end
+        if row.dungeon then GameTooltip:AddLine("Dungeon", 1, 0.82, 0) end
         GameTooltip:AddLine("Im Guide führen.", 1, 0.82, 0)
         GameTooltip:Show()
     end)
@@ -664,6 +765,7 @@ local function fillQuests(plan)
             row.questId = quest.id
             row.hasChain = quest.chain ~= nil
             row.known = quest.known
+            row.dungeon = quest.dungeon
             row.tipName = quest.name
             row.shade:SetShown(usedRows % 2 == 0)
 
@@ -697,7 +799,8 @@ local function fillQuests(plan)
             end
             local level = (quest.level and quest.level > 0) and ("[" .. quest.level .. "] ") or ""
             local done = quest.complete and "|cff40ff40fertig|r  " or ""
-            row.name:SetText(done .. level .. (quest.name or "Quest"))
+            local mark = quest.dungeon and "|cffffcc00D|r  " or ""
+            row.name:SetText(done .. mark .. level .. (quest.name or "Quest"))
             row.name:SetAlpha(quest.included and 1 or 0.45)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST

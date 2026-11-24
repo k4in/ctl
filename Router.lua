@@ -1,11 +1,10 @@
 local _, ns = ...
 
 local OWNER = "ClearTheLog"
-local STOP_CAP = 64
 
--- TomTom gets one arrow. Shortest Path Forever gets the remaining mapped steps
--- as one journey and waits on each stop until we send the next plan, so walking
--- onto a coordinate is not treated as finishing the quest objective.
+-- Both routers get waypoints for the next few steps only. TomTom's arrow stays
+-- on the first of them. Shortest Path waits on each stop until the next plan,
+-- so arriving at a coordinate is not treated as finishing the objective.
 
 local function addonLoaded(name)
     if C_AddOns and C_AddOns.IsAddOnLoaded then
@@ -35,7 +34,10 @@ end
 
 function ns.ShouldPushRoute(reasons)
     local db = ns.CharDB()
-    if reasons.step or reasons.manual or reasons.router or reasons.abandon then return true end
+    if reasons.step or reasons.manual or reasons.router or reasons.abandon
+        or reasons.plan or reasons.skip then
+        return true
+    end
     if reasons.open and db.router then return true end
     if not db.router then return false end
     if reasons.accept and db.refreshAccept then return true end
@@ -51,9 +53,16 @@ local function stopTitle(stop)
     return stop.text or stop.questName or "Schritt"
 end
 
+local function routeLimit()
+    local limit = ns.ROUTE_STEPS
+    if type(limit) ~= "number" or limit < 1 then return 5 end
+    return limit
+end
+
 local function mappedStops(steps, fromIndex)
     local mapped, skipped = {}, 0
-    for index = fromIndex, #steps do
+    local last = math.min(#steps, fromIndex + routeLimit() - 1)
+    for index = fromIndex, last do
         local stop = steps[index]
         if ns.HasMapPoint(stop) then
             mapped[#mapped + 1] = { index = index, stop = stop }
@@ -66,8 +75,7 @@ end
 
 local function signatureOf(mapped, router)
     local parts = { router }
-    local limit = router == "tomtom" and 1 or STOP_CAP
-    for index = 1, math.min(#mapped, limit) do
+    for index = 1, #mapped do
         local stop = mapped[index].stop
         parts[#parts + 1] = string.format(
             "%d:%.4f:%.4f:%s",
@@ -88,9 +96,16 @@ local function clearSpf()
 end
 
 local function clearTomTom()
-    if ns.tomtomUid and type(TomTom) == "table" and type(TomTom.RemoveWaypoint) == "function" then
-        pcall(TomTom.RemoveWaypoint, TomTom, ns.tomtomUid)
+    if type(TomTom) == "table" and type(TomTom.RemoveWaypoint) == "function" then
+        if type(ns.tomtomUids) == "table" then
+            for _, uid in ipairs(ns.tomtomUids) do
+                pcall(TomTom.RemoveWaypoint, TomTom, uid)
+            end
+        elseif ns.tomtomUid then
+            pcall(TomTom.RemoveWaypoint, TomTom, ns.tomtomUid)
+        end
     end
+    ns.tomtomUids = nil
     ns.tomtomUid = nil
 end
 
@@ -99,37 +114,44 @@ local function remember(signature, router)
     ns.lastRouteRouter = router
 end
 
-local function pointTomTom(entry)
-    local stop = entry.stop
-    local title = stopTitle(stop)
+local function pointTomTom(mapped)
     clearTomTom()
-    local ok, uid = pcall(TomTom.AddWaypoint, TomTom, ns.UiMap(stop.areaId), ns.MapFraction(stop.x), ns.MapFraction(stop.y), {
-        title = title,
-        persistent = false,
-        minimap = true,
-        world = true,
-        from = "Clear the Log",
-        source = "Clear the Log",
-        questID = stop.questId,
-        arrivaldistance = 15,
-        cleardistance = 0,
-    })
-    if not ok or uid == nil then return false end
-    ns.tomtomUid = uid
-    if type(TomTom.SetCrazyArrow) == "function" then
-        local arrival = 15
-        local profile = TomTom.db and TomTom.db.profile
-        local arrow = profile and profile.arrow
-        if type(arrow) == "table" and type(arrow.arrival) == "number" then arrival = arrow.arrival end
-        pcall(TomTom.SetCrazyArrow, TomTom, uid, arrival, title)
+    local uids = {}
+    for index, entry in ipairs(mapped) do
+        local stop = entry.stop
+        local title = stopTitle(stop)
+        local ok, uid = pcall(TomTom.AddWaypoint, TomTom, ns.UiMap(stop.areaId), ns.MapFraction(stop.x), ns.MapFraction(stop.y), {
+            title = title,
+            persistent = false,
+            minimap = true,
+            world = true,
+            from = "Clear the Log",
+            source = "Clear the Log",
+            questID = stop.questId,
+            arrivaldistance = 15,
+            cleardistance = 0,
+        })
+        if not ok or uid == nil then
+            if index == 1 then return false, 0 end
+            break
+        end
+        uids[#uids + 1] = uid
+        if index == 1 and type(TomTom.SetCrazyArrow) == "function" then
+            local arrival = 15
+            local profile = TomTom.db and TomTom.db.profile
+            local arrow = profile and profile.arrow
+            if type(arrow) == "table" and type(arrow.arrival) == "number" then arrival = arrow.arrival end
+            pcall(TomTom.SetCrazyArrow, TomTom, uid, arrival, title)
+        end
     end
-    return true
+    ns.tomtomUids = uids
+    ns.tomtomUid = uids[1]
+    return true, #uids
 end
 
 local function spfPayload(mapped, rich)
     local payload = {}
-    local limit = math.min(#mapped, STOP_CAP)
-    for index = 1, limit do
+    for index = 1, #mapped do
         local stop = mapped[index].stop
         local point = {
             map = ns.UiMap(stop.areaId),
@@ -147,21 +169,21 @@ local function spfPayload(mapped, rich)
         end
         payload[index] = point
     end
-    return payload, limit < #mapped
+    return payload
 end
 
 local function pointSpf(mapped)
     local api = ShortestPathForever.API
-    local payload, truncated = spfPayload(mapped, true)
+    local payload = spfPayload(mapped, true)
     local ok, result, why = pcall(api.NavigateRoute, OWNER, payload)
     if not (ok and result == true) then
-        payload, truncated = spfPayload(mapped, false)
+        payload = spfPayload(mapped, false)
         ok, result, why = pcall(api.NavigateRoute, OWNER, payload)
     end
-    if ok and result == true then return true, truncated, #payload end
-    if not ok then return false, truncated, 0, "Shortest Path hat die Route abgelehnt." end
-    if type(why) == "string" and why ~= "" then return false, truncated, 0, why end
-    return false, truncated, 0, "Shortest Path hat die Route gerade nicht übernommen."
+    if ok and result == true then return true, #payload end
+    if not ok then return false, 0, "Shortest Path hat die Route abgelehnt." end
+    if type(why) == "string" and why ~= "" then return false, 0, why end
+    return false, 0, "Shortest Path hat die Route gerade nicht übernommen."
 end
 
 local function noteSkipped(text, skipped)
@@ -192,7 +214,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
 
     local mapped, skipped = mappedStops(steps, fromIndex)
     local signature = signatureOf(mapped, db.router)
-    local force = reasons.step or reasons.router or reasons.manual
+    local force = reasons.step or reasons.router or reasons.manual or reasons.plan or reasons.skip
     if not force and signature == ns.lastRouteKey and db.router == ns.lastRouteRouter then return end
 
     ns.activeStep = #steps > 0 and fromIndex or nil
@@ -213,7 +235,8 @@ function ns.PushRoute(plan, fromIndex, reasons)
             remember(signature, db.router)
             return
         end
-        if not pointTomTom(mapped[1]) then
+        local pointed, count = pointTomTom(mapped)
+        if not pointed then
             ns.routeStatus = "TomTom hat den Wegpunkt nicht übernommen."
             ns.routeStatusError = true
             ns.lastRouteKey = nil
@@ -221,7 +244,9 @@ function ns.PushRoute(plan, fromIndex, reasons)
             return
         end
         ns.activeStep = mapped[1].index
-        ns.routeStatus = noteSkipped("TomTom zeigt Schritt " .. mapped[1].index .. ".", skipped)
+        local text = count == 1 and ("TomTom zeigt Schritt " .. mapped[1].index .. ".")
+            or ("TomTom zeigt " .. count .. " Wegpunkte ab Schritt " .. mapped[1].index .. ".")
+        ns.routeStatus = noteSkipped(text, skipped)
         ns.routeStatusError = false
         remember(signature, db.router)
         return
@@ -243,7 +268,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
         return
     end
 
-    local accepted, truncated, count, why = pointSpf(mapped)
+    local accepted, count, why = pointSpf(mapped)
     if not accepted then
         ns.routeStatus = why
         ns.routeStatusError = true
@@ -252,8 +277,7 @@ function ns.PushRoute(plan, fromIndex, reasons)
         return
     end
     ns.activeStep = mapped[1].index
-    local text = truncated and "Shortest Path führt die ersten 64 Stopps."
-        or ("Shortest Path führt " .. count .. (count == 1 and " Stopp." or " Stopps."))
+    local text = "Shortest Path führt " .. count .. (count == 1 and " Stopp." or " Stopps.")
     ns.routeStatus = noteSkipped(text, skipped)
     ns.routeStatusError = false
     remember(signature, db.router)
