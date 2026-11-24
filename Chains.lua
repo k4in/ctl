@@ -94,6 +94,47 @@ function ns.ChainLabel(chain)
     return label
 end
 
+function ns.FollowupBriefs(questId)
+    local briefs = {}
+    if type(questId) ~= "number" or not ns.QuestExists(questId) then return briefs end
+    local seen = { [questId] = true }
+
+    local function push(id)
+        if #briefs >= 6 then return false end
+        if type(id) ~= "number" or seen[id] or not ns.QuestExists(id) then return false end
+        seen[id] = true
+        local zone = "Ohne Gebiet"
+        if ns.ObjectiveZoneLabel then
+            local label = ns.ObjectiveZoneLabel(id)
+            if type(label) == "string" and label ~= "" then zone = label end
+        end
+        briefs[#briefs + 1] = {
+            id = id,
+            name = ns.QuestName(id) or ("Quest " .. id),
+            zone = zone,
+        }
+        return true
+    end
+
+    local cursor = questId
+    for _ = 1, 6 do
+        if #briefs >= 6 then break end
+        local nextId, branched = nextOf(cursor)
+        if nextId then
+            if not push(nextId) then break end
+            cursor = nextId
+        elseif branched then
+            for _, child in ipairs(idList(cursor, "childQuests")) do
+                push(child)
+            end
+            break
+        else
+            break
+        end
+    end
+    return briefs
+end
+
 function ns.FollowupId(chain, inLog)
     local nextId = chain and chain.nextId
     if not nextId or (inLog and inLog[nextId]) then return nil end

@@ -430,6 +430,14 @@ function ns.CollectStops(questId, spec)
 
     local queue = {}
 
+    local function applyProgress(stop, line)
+        if not line then return end
+        stop.progressText = line.text
+        stop.numFulfilled = line.numFulfilled
+        stop.numRequired = line.numRequired
+        stop.objectiveDone = line.finished and true or false
+    end
+
     local function pushObjective(text, point, sourceName)
         if spec.complete then return end
         local key = norm(text)
@@ -440,7 +448,7 @@ function ns.CollectStops(questId, spec)
             line.used = true
             if line.finished then return end
         end
-        queue[#queue + 1] = {
+        local stop = {
             questId = questId,
             questName = questName,
             kind = "objective",
@@ -453,6 +461,8 @@ function ns.CollectStops(questId, spec)
             sourceName = sourceName,
             unmatched = line == nil,
         }
+        applyProgress(stop, line)
+        queue[#queue + 1] = stop
     end
 
     if ns.QuestExists(questId) and not spec.complete then
@@ -531,7 +541,11 @@ function ns.CollectStops(questId, spec)
         for index, queueIndex in ipairs(pending) do
             local line = unused[index]
             line.used = true
-            if line.finished then drop[queueIndex] = true end
+            if line.finished then
+                drop[queueIndex] = true
+            else
+                applyProgress(queue[queueIndex], line)
+            end
         end
         if next(drop) then
             local kept = {}
@@ -550,7 +564,7 @@ function ns.CollectStops(questId, spec)
         for _, line in ipairs(lines) do
             if not line.used and not line.finished and type(line.text) == "string" and line.text ~= "" then
                 line.used = true
-                addStop(stops, {
+                local stop = {
                     questId = questId,
                     questName = questName,
                     kind = "objective",
@@ -558,7 +572,9 @@ function ns.CollectStops(questId, spec)
                     areaId = 0,
                     followup = spec.followup,
                     afterTurnin = spec.afterTurnin,
-                })
+                }
+                applyProgress(stop, line)
+                addStop(stops, stop)
             end
         end
     end
@@ -589,4 +605,126 @@ function ns.CollectStops(questId, spec)
     })
 
     return stops
+end
+
+local function shorten(text, limit)
+    if type(text) ~= "string" then return nil end
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+    text = text:gsub("%s+", " ")
+    text = text:match("^%s*(.-)%s*$")
+    if not text or text == "" then return nil end
+    if #text <= limit then return text end
+    local cut = limit - 3
+    while cut > 0 do
+        local byte = text:byte(cut)
+        if byte < 128 then break end
+        if byte >= 192 then
+            cut = cut - 1
+            break
+        end
+        cut = cut - 1
+    end
+    if cut < 1 then return "..." end
+    return text:sub(1, cut) .. "..."
+end
+
+function ns.QuestBlurb(questId)
+    if type(questId) ~= "number" or questId <= 0 then return nil end
+    local index
+    if C_QuestLog and type(C_QuestLog.GetLogIndexForQuestID) == "function" then
+        local ok, value = pcall(C_QuestLog.GetLogIndexForQuestID, questId)
+        if ok then index = ns.Plain(value) end
+    end
+    if type(index) == "number" and index > 0 and type(GetQuestLogQuestText) == "function" then
+        local ok, description = pcall(GetQuestLogQuestText, index)
+        if ok then
+            local text = shorten(ns.Plain(description), 400)
+            if text then return text end
+        end
+    end
+    if C_QuestLog and type(C_QuestLog.GetQuestDescription) == "function" then
+        local ok, description = pcall(C_QuestLog.GetQuestDescription, questId)
+        if ok then
+            local text = shorten(ns.Plain(description), 400)
+            if text then return text end
+        end
+    end
+    return nil
+end
+
+function ns.QuestObjectiveLines(questId)
+    local value = ns.QuestCall(questId, "objectivesText")
+    local lines = {}
+    if type(value) == "string" then
+        if value ~= "" then lines[1] = value end
+        return lines
+    end
+    if type(value) ~= "table" then return lines end
+    for _, line in ipairs(value) do
+        if type(line) == "string" and line ~= "" then lines[#lines + 1] = line end
+    end
+    return lines
+end
+
+function ns.ObjectiveZoneLabel(questId)
+    local function fallback()
+        local zone = ns.QuestNumber(questId, "zoneOrSort")
+        if zone and zone > 0 then
+            local name = ns.ZoneName(zone)
+            if type(name) == "string" and name ~= "" then return name end
+        end
+        return "Ohne Gebiet"
+    end
+    if not ns.QuestExists(questId) then return fallback() end
+    local ok, stops = pcall(ns.CollectStops, questId, {
+        followup = true,
+        lines = {},
+        questName = ns.QuestName(questId),
+    })
+    if not ok or type(stops) ~= "table" then return fallback() end
+    local names, seen = {}, {}
+    for _, stop in ipairs(stops) do
+        if stop.kind == "objective" and type(stop.areaId) == "number" and stop.areaId > 0 then
+            local name = ns.ZoneName(stop.areaId)
+            if type(name) == "string" and name ~= "" and not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+                if #names >= 3 then break end
+            end
+        end
+    end
+    if #names == 0 then return fallback() end
+    return table.concat(names, ", ")
+end
+
+local function displayWords(text)
+    if type(text) ~= "string" then return "" end
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+    text = text:gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("%s*%(%s*%d+%s*/%s*%d+%s*%)%s*$", "")
+    text = text:gsub("%s+%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("^%s*%d+%s*/%s*%d+%s+", "")
+    text = text:gsub("%s+", " ")
+    return (text:match("^%s*(.-)%s*$")) or ""
+end
+
+-- A fulfilled counter of 1/1 can be set while the objective is still open.
+function ns.ProgressLabel(stop)
+    if type(stop) ~= "table" or stop.kind ~= "objective" then return nil end
+    local words = displayWords(stop.progressText)
+    if words == "" then return nil end
+    local need = stop.numRequired
+    local got = type(stop.numFulfilled) == "number" and stop.numFulfilled or 0
+    local label
+    if type(need) == "number" and need > 1 then
+        label = string.format("%d/%d %s", got, need, words)
+    elseif stop.objectiveDone then
+        label = words
+    elseif type(need) == "number" and need <= 1 then
+        label = "0/1 " .. words
+    else
+        return nil
+    end
+    if label == stop.text or label == displayWords(stop.text) then return nil end
+    return label
 end

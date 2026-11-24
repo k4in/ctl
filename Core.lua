@@ -164,12 +164,16 @@ local function readLog()
                                 local text = ns.Plain(objective.text)
                                 local finished = ns.Plain(objective.finished)
                                 if finished == nil then finished = ns.Plain(objective.completed) end
-                                if text == nil and finished == nil then
+                                local got = ns.Plain(objective.numFulfilled)
+                                local need = ns.Plain(objective.numRequired)
+                                if text == nil and finished == nil and got == nil and need == nil then
                                     secret = true
                                 else
                                     objectives[#objectives + 1] = {
                                         text = text,
                                         finished = finished and true or false,
+                                        numFulfilled = type(got) == "number" and got or nil,
+                                        numRequired = type(need) == "number" and need or nil,
                                     }
                                 end
                             end
@@ -321,7 +325,43 @@ end
 function ns.RefreshPlan()
     if not ns.ready then return end
     ns.routeFrom = nil
+    ns.routeOrigin = nil
     ns.RequestRefresh("plan")
+end
+
+function ns.RecalculateFromStep(index)
+    if not ns.ready or not ns.StepKey then return end
+    local stop = ns.lastPlan and ns.lastPlan.steps and ns.lastPlan.steps[index]
+    if not stop then return end
+    local key = ns.StepKey(stop)
+    ns.CharDB().skipped[key] = nil
+    ns.routeOrigin = {
+        key = key,
+        areaId = stop.areaId,
+        x = stop.x,
+        y = stop.y,
+    }
+    ns.routeFrom = nil
+    ns.RequestRefresh("plan")
+end
+
+function ns.OpenQuestLog(questId)
+    if type(questId) ~= "number" or questId <= 0 then return end
+    if InCombatLockdown and InCombatLockdown() then
+        ns.Say("Das Questlog lässt sich im Kampf nicht öffnen.")
+        return
+    end
+    if C_QuestLog and type(C_QuestLog.SetSelectedQuest) == "function" then
+        pcall(C_QuestLog.SetSelectedQuest, questId)
+    end
+    if QuestUtil and type(QuestUtil.OpenQuestDetails) == "function" then
+        local ok = pcall(QuestUtil.OpenQuestDetails, questId)
+        if ok then return end
+    end
+    local frame = QuestLogFrame or QuestLogExFrame
+    if frame and ShowUIPanel then
+        pcall(ShowUIPanel, frame)
+    end
 end
 
 local function pruneSkips(rows, plan)
@@ -350,10 +390,13 @@ function ns.Refresh(reasons)
 
     local routeFrom = ns.routeFrom
     ns.routeFrom = nil
+    local origin = ns.routeOrigin
+    ns.routeOrigin = nil
 
     local rows, err = readLog()
     if not rows then
         if reasons.step then ns.routeFrom = routeFrom end
+        if origin then ns.routeOrigin = origin end
         ns.lastPlan, ns.lastErr = nil, err
         if ns.Render then ns.Render(nil, err) end
         return
@@ -364,7 +407,20 @@ function ns.Refresh(reasons)
     if takeSnapshot(rows) then reasons.objective = true end
     if reasons.removed and not reasons.turnin then reasons.abandon = true end
 
-    local plan = ns.BuildPlan(rows, ns.PlayerLocation())
+    local player = ns.PlayerLocation()
+    if type(origin) == "table" and type(origin.areaId) == "number" and origin.areaId > 0 then
+        player = {
+            areaId = origin.areaId,
+            x = origin.x,
+            y = origin.y,
+            zoneName = ns.ZoneName(origin.areaId),
+            continent = ns.ContinentOfArea(origin.areaId),
+        }
+    end
+    local plan = ns.BuildPlan(rows, player)
+    if type(origin) == "table" and origin.key and ns.PromoteStep then
+        ns.PromoteStep(plan.steps, origin.key)
+    end
     pruneSkips(rows, plan)
     ns.lastPlan, ns.lastErr = plan, err
 

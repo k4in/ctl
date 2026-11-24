@@ -2,7 +2,7 @@
 ## Title: Clear the Log
 ## Notes: Plant eine knappe Reihenfolge für die Quests in deinem Log
 ## Author: ClearTheLog
-## Version: 0.3.0
+## Version: 0.3.1
 ## Category: Quests
 ## Dependencies: QuestieDB
 ## OptionalDeps: TomTom, ShortestPathForever

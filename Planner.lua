@@ -13,6 +13,20 @@ function ns.StepKey(stop)
     return tostring(stop.questId or 0) .. "\031" .. tostring(stop.kind or "") .. "\031" .. text
 end
 
+function ns.PromoteStep(steps, key)
+    if type(steps) ~= "table" or type(key) ~= "string" then return end
+    for index, stop in ipairs(steps) do
+        if ns.StepKey(stop) == key then
+            stop.skipped = nil
+            if index ~= 1 then
+                table.remove(steps, index)
+                table.insert(steps, 1, stop)
+            end
+            return
+        end
+    end
+end
+
 function ns.ApplySkips(ordered)
     local db = ns.CharDB()
     if type(db.skipped) ~= "table" then return ordered end
@@ -68,6 +82,10 @@ local function fallbackStops(row)
                     text = line.text,
                     areaId = 0,
                     dungeon = dungeon or nil,
+                    progressText = line.text,
+                    numFulfilled = line.numFulfilled,
+                    numRequired = line.numRequired,
+                    objectiveDone = false,
                 }
             end
         end
@@ -294,6 +312,7 @@ function ns.BuildPlan(rows, player)
             complete = row.complete,
             known = dbReady and ns.QuestExists(row.id) or false,
             dungeon = ns.IsDungeonQuest and ns.IsDungeonQuest(row.id) or false,
+            objectives = row.objectives,
         }
 
         if ns.IsIncluded(row.id) then
