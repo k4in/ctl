@@ -109,6 +109,35 @@ function ns.IsDungeonQuest(questId)
     return zone ~= nil and dungeonAreas[zone] == true
 end
 
+-- 0 means the quest does not ask for a group.
+function ns.SuggestedGroup(questId)
+    if type(questId) ~= "number" or questId <= 0 then return 0 end
+    local function read(fn)
+        if type(fn) ~= "function" then return nil end
+        local ok, value = pcall(fn, questId)
+        if not ok then return nil end
+        value = ns.Plain(value)
+        if type(value) == "number" and value > 0 then return value end
+    end
+    local questLog = C_QuestLog
+    return read(questLog and questLog.GetSuggestedGroupSize)
+        or read(GetSuggestedGroupSize)
+        or 0
+end
+
+-- Tag 1 is the elite/group marker. A suggested group counts too.
+-- Dungeon quests keep the dungeon mark instead.
+function ns.IsGroupQuest(questId)
+    if type(questId) ~= "number" or questId <= 0 then return false end
+    if ns.IsDungeonQuest(questId) then return false end
+    local tag = ns.QuestTagId(questId)
+    if tag == 1 then return true end
+    -- Another tag, such as a raid, keeps its own mark. Only an untagged quest
+    -- with a suggested group is a plain group quest.
+    if tag ~= nil then return false end
+    return ns.SuggestedGroup(questId) > 0
+end
+
 function ns.QuestCall(questId, field)
     if not ns.DBReady() or type(questId) ~= "number" then return nil end
     local fn = QuestDB[field]

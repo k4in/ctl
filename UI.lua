@@ -14,18 +14,37 @@ local BACKDROP = {
 local silent = false
 
 local DUNGEON_R, DUNGEON_G, DUNGEON_B = 0.36, 0.87, 0.94
+local GROUP_R, GROUP_G, GROUP_B = 1, 0.8, 0
 
 local function hexColor(r, g, b)
     return string.format("|cff%02x%02x%02x", math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
 end
 
 local DUNGEON_CODE = hexColor(DUNGEON_R, DUNGEON_G, DUNGEON_B)
+local GROUP_CODE = hexColor(GROUP_R, GROUP_G, GROUP_B)
 
-local function levelPrefix(level)
+local function levelPrefix(level, questId)
     if type(level) ~= "number" or level <= 0 or type(ns.LevelTone) ~= "function" then return "" end
     local r, g, b = ns.LevelTone(level)
     if not r then return "" end
-    return hexColor(r, g, b) .. "[" .. level .. "]|r "
+    local color = hexColor(r, g, b)
+    local badge = ""
+    if type(questId) == "number" then
+        if ns.IsDungeonQuest and ns.IsDungeonQuest(questId) then
+            badge = DUNGEON_CODE .. "D|r" .. color
+        elseif ns.IsGroupQuest and ns.IsGroupQuest(questId) then
+            badge = GROUP_CODE .. "+|r" .. color
+        end
+    end
+    return color .. "[" .. level .. badge .. "]|r "
+end
+
+local function addQuestKind(questId)
+    if ns.IsDungeonQuest and ns.IsDungeonQuest(questId) then
+        GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B)
+    elseif ns.IsGroupQuest and ns.IsGroupQuest(questId) then
+        GameTooltip:AddLine("Group Quest", GROUP_R, GROUP_G, GROUP_B)
+    end
 end
 
 local function bindTip(widget, title, body)
@@ -1023,7 +1042,7 @@ local function showQuestTip(row, owner)
     addContacts(row.questId)
     addArea(row.questId)
     if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
-    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
+    addQuestKind(row.questId)
     if row.chainText then
         GameTooltip:AddLine("Expand the chain to choose follow-ups.", 0.7, 0.7, 0.7, true)
     end
@@ -1041,7 +1060,7 @@ local function showChainTip(row, owner)
     addQuestBody(row.memberId, questObjectives(row.memberId))
     addContacts(row.memberId)
     addArea(row.memberId)
-    if row.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
+    addQuestKind(row.memberId)
     if row.role == "followup" then
         if row.included then
             GameTooltip:AddLine("Uncheck to drop this quest and every quest after it.", 0.8, 0.8, 0.8, true)
@@ -1068,9 +1087,8 @@ local function paintExpand(button, open)
 end
 
 local function chainMemberText(member)
-    local dungeon = member.dungeon and ("  " .. DUNGEON_CODE .. "Dungeon|r") or ""
     local here = member.role == "current" and "  current" or ""
-    return member.index .. ".  " .. levelPrefix(member.level) .. (member.name or "Quest") .. dungeon .. here
+    return member.index .. ".  " .. levelPrefix(member.level, member.id) .. (member.name or "Quest") .. here
 end
 
 local function tintCheck(check, r, g, b)
@@ -1312,8 +1330,7 @@ local function fillQuests(plan)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             end
             local done = quest.complete and "|cff40ff40done|r  " or ""
-            local mark = quest.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
-            row.name:SetText(done .. mark .. levelPrefix(quest.level) .. (quest.name or "Quest"))
+            row.name:SetText(done .. levelPrefix(quest.level, quest.id) .. (quest.name or "Quest"))
             row.name:SetAlpha(quest.included and 1 or 0.45)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST
