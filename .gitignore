@@ -26,3 +26,6 @@ luac.out
 .release/
 dist/
 *.zip
+
+# Local install path, not part of the addon
+.env
