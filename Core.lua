@@ -129,20 +129,22 @@ function ns.SetChainFollowups(questId, enabled)
     if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
     db.decided[questId] = true
     db.chainOff[questId] = nil
+    local chain = type(ns.ChainInfo) == "function" and ns.ChainInfo(questId) or nil
+    local through = questId
     if enabled then
         db.chain[questId] = true
         db.chainThrough[questId] = nil
-        return
-    end
-    db.chain[questId] = false
-    local through = questId
-    if type(ns.ChainInfo) == "function" then
-        local chain = ns.ChainInfo(questId)
+        if chain and type(chain.ids) == "table" then through = chain.ids[#chain.ids] end
+    else
+        db.chain[questId] = false
         if chain and type(chain.ids) == "table" and chain.ids[chain.index] then
             through = chain.ids[chain.index]
         end
+        db.chainThrough[questId] = through
     end
-    db.chainThrough[questId] = through
+    if type(ns.MarkChainFollowups) == "function" then
+        ns.MarkChainFollowups(questId, chain, through)
+    end
 end
 
 function ns.SetIncluded(questId, included)
@@ -670,22 +672,35 @@ function ns.FollowupReserved(acceptId, fromId, live)
     if ns.IsQuestDone and ns.IsQuestDone(acceptId) then return false end
     local db = ns.CharDB()
     if db.tracked[acceptId] == false then return false end
-    if type(fromId) == "number" and type(live) == "table" and live[fromId] ~= nil then
-        if not ns.IsIncluded(fromId) then return false end
-        if type(ns.ChainInfo) ~= "function" or type(ns.ChainCutoff) ~= "function" then return true end
-        local chain = ns.ChainInfo(fromId)
-        if type(chain) ~= "table" or type(chain.ids) ~= "table" then return true end
-        local cutoff = ns.ChainCutoff(fromId, chain)
-        if cutoff == fromId then return false end
-        local passed = false
-        for _, id in ipairs(chain.ids) do
-            if not passed then
-                if id == fromId then passed = true end
-            else
-                if id == acceptId then return true end
-                if id == cutoff then return false end
+    -- A quest still in the log owns the chain. Its cutoff decides every later quest,
+    -- even when the handoff points at a follow-up that is not in the log yet.
+    if type(live) == "table" and type(ns.ChainInfo) == "function" and type(ns.ChainCutoff) == "function" then
+        local chain = ns.ChainInfo(acceptId)
+        if type(chain) == "table" and type(chain.ids) == "table" then
+            local anchor
+            for _, id in ipairs(chain.ids) do
+                if id == acceptId then break end
+                if live[id] ~= nil then anchor = id end
+            end
+            if anchor then
+                if not ns.IsIncluded(anchor) then return false end
+                local anchorChain = ns.ChainInfo(anchor) or chain
+                local cutoff = ns.ChainCutoff(anchor, anchorChain)
+                if type(cutoff) ~= "number" or cutoff == anchor then return false end
+                local passed = false
+                for _, id in ipairs(anchorChain.ids or {}) do
+                    if not passed then
+                        if id == anchor then passed = true end
+                    else
+                        if id == acceptId then return true end
+                        if id == cutoff then return false end
+                    end
+                end
+                return false
             end
         end
+    end
+    if type(fromId) == "number" and type(live) == "table" and live[fromId] ~= nil and not ns.IsIncluded(fromId) then
         return false
     end
     return true

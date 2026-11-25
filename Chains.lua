@@ -147,6 +147,23 @@ function ns.ChainView(questId)
     }
 end
 
+-- Included follow-ups stay on the chain. The others are out of the guide entirely.
+function ns.MarkChainFollowups(questId, chain, throughId)
+    if type(chain) ~= "table" or type(chain.ids) ~= "table" then return end
+    local db = ns.CharDB()
+    local index = chain.index or positionOf(chain.ids, questId) or 1
+    local throughPos = positionOf(chain.ids, throughId) or index
+    if throughPos < index then throughPos = index end
+    for at, id in ipairs(chain.ids) do
+        if at > index then
+            local on = at <= throughPos
+            db.tracked[id] = on and true or false
+            db.decided[id] = true
+            if not on and type(db.handoff) == "table" then db.handoff[id] = nil end
+        end
+    end
+end
+
 -- Click a later follow-up to include the chain through it.
 -- Click an included follow-up to drop that quest and every quest after it.
 function ns.AdjustChain(questId, clickedId)
@@ -164,6 +181,7 @@ function ns.AdjustChain(questId, clickedId)
     db.chain[questId] = through ~= questId
     db.chainOff[questId] = nil
     db.decided[questId] = true
+    ns.MarkChainFollowups(questId, chain, through)
     return true
 end
 
