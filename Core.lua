@@ -2,7 +2,6 @@ local addonName, ns = ...
 
 ns.addonName = addonName
 ns.TITLE = "Clear the Log"
-ns.GUIDE_LIMIT = 10
 ns.ROUTE_STEPS = 5
 
 -- Mainline hands addons opaque secret values. Comparing or storing them as

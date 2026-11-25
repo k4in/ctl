@@ -45,25 +45,12 @@ function ns.ApplySkips(ordered)
     return head
 end
 
--- The guide lists the next few steps. Skipped steps stay reachable at the end.
+-- The guide lists every remaining step. Routing still sends only the next few.
 function ns.VisibleStepIndexes(steps)
     local list = steps or {}
-    local start = ns.windowStart or 1
-    if type(start) ~= "number" or start < 1 then start = 1 end
-    if #list > 0 and start > #list then start = #list end
-    local limit = ns.GUIDE_LIMIT or 10
-    local last = math.min(#list, start + limit - 1)
-    local rows, seen = {}, {}
-    for index = start, math.max(last, 0) do
-        if list[index] then
-            rows[#rows + 1] = index
-            seen[index] = true
-        end
-    end
+    local rows = {}
     for index = 1, #list do
-        if not seen[index] and list[index].skipped then
-            rows[#rows + 1] = index
-        end
+        rows[#rows + 1] = index
     end
     return rows
 end
