@@ -175,21 +175,6 @@ local function styleCheck(box)
     box:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
 end
 
-local function texCoord(region, left, right, top, bottom)
-    if region then region:SetTexCoord(left, right, top, bottom) end
-end
-
-local function styleRadio(radio)
-    radio:SetNormalTexture("Interface\\Buttons\\UI-RadioButton")
-    texCoord(radio:GetNormalTexture(), 0, 0.25, 0, 1)
-    radio:SetCheckedTexture("Interface\\Buttons\\UI-RadioButton")
-    texCoord(radio:GetCheckedTexture(), 0.25, 0.5, 0, 1)
-    radio:SetHighlightTexture("Interface\\Buttons\\UI-RadioButton", "ADD")
-    texCoord(radio:GetHighlightTexture(), 0.5, 0.75, 0, 1)
-    radio:SetPushedTexture("Interface\\Buttons\\UI-RadioButton")
-    texCoord(radio:GetPushedTexture(), 0, 0.25, 0, 1)
-end
-
 local fit
 
 local function scroller(parent, name, x, yTop, right, yBottom)
@@ -224,71 +209,24 @@ local function clip(line)
     if line.SetMaxLines then line:SetMaxLines(1) end
 end
 
-local options = chrome("ClearTheLogOptions", 480, 460, "posOptions", -260, 40, nil, {
-    minW = 440, minH = 420, sizeKey = "sizeOptions",
+local options = chrome("ClearTheLogOptions", 480, 360, "posOptions", -260, 40, nil, {
+    minW = 440, minH = 340, sizeKey = "sizeOptions",
 })
 options.title:SetText(ns.TITLE)
 options.subtitle:SetText("/ctl")
 ns.options = options
 
-section(options, "Default navigation", -46)
-
-local radios = {}
-local routerStatus = options:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-
-local function chooseRouter(value)
-    if silent or not ns.ready then return end
-    local db = ns.CharDB()
-    local stored = (value == "tomtom" or value == "spf") and value or nil
-    if stored == db.router then
-        ns.PaintOptions()
-        return
-    end
-    db.router = stored
-    if not stored then db.navigating = false end
-    ns.PaintOptions()
-    if ns.PaintNavigation then ns.PaintNavigation() end
-    if not stored or db.navigating then ns.RequestRefresh("router") end
-end
-
-local function addRadio(text, value, y, tipTitle, tipBody)
-    local radio = CreateFrame("CheckButton", nil, options)
-    radio:SetSize(24, 24)
-    radio:SetPoint("TOPLEFT", 24, y)
-    styleRadio(radio)
-    radio.value = value
-    local label = options:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    label:SetPoint("LEFT", radio, "RIGHT", 4, 0)
-    label:SetText(text)
-    local hit = CreateFrame("Button", nil, options)
-    hit:SetPoint("TOPLEFT", radio, "TOPRIGHT", 2, 0)
-    hit:SetSize(300, 24)
-    radio:SetScript("OnClick", function()
-        if silent then return end
-        chooseRouter(value)
-    end)
-    hit:SetScript("OnClick", function()
-        if silent then return end
-        chooseRouter(value)
-    end)
-    bindTip(radio, tipTitle, tipBody)
-    bindTip(hit, tipTitle, tipBody)
-    radios[#radios + 1] = radio
-    return radio
-end
-
-addRadio("None", "none", -70, "No navigation", "The navigation button in the guide stays gray and does nothing.")
-addRadio("TomTom", "tomtom", -96, "TomTom", "Default provider. The guide button sends the next 5 steps to TomTom.")
-addRadio("Shortest Path Forever", "spf", -122, "Shortest Path Forever", "Default provider. The guide button sends the next 5 steps as one journey.")
+section(options, "Navigation", -46)
 
 local routerHint = options:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-routerHint:SetPoint("TOPLEFT", 28, -154)
+routerHint:SetPoint("TOPLEFT", 28, -70)
 routerHint:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerHint:SetJustifyH("LEFT")
 routerHint:SetWordWrap(true)
-routerHint:SetText("The guide button turns this provider on and off and sends the next 5 steps. None leaves that button inactive.")
+routerHint:SetText("Shortest Path Forever leads the next 5 steps. The button in the guide turns it on and off.")
 
-routerStatus:SetPoint("TOPLEFT", 28, -198)
+local routerStatus = options:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+routerStatus:SetPoint("TOPLEFT", 28, -108)
 routerStatus:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerStatus:SetJustifyH("LEFT")
 
@@ -323,14 +261,14 @@ local function addToggle(text, y, field, tipTitle, tipBody)
     return box
 end
 
-section(options, "New quests", -226)
+section(options, "New quests", -136)
 
-addToggle("Add new quests to the guide", -250, "autoTrack", "Add automatically", "A quest you accept is added to the guide. A follow-up that is already a step stays where it is.")
+addToggle("Add new quests to the guide", -160, "autoTrack", "Add automatically", "A quest you accept is added to the guide. A follow-up that is already a step stays where it is.")
 
-section(options, "Quest dialogs", -290)
+section(options, "Quest dialogs", -200)
 
-addToggle("Turn in completed quests", -314, "autoTurnIn", "Turn in automatically", "Turns in every completed quest when you talk to someone. A reward choice waits for you. An item quest in the guide is confirmed too.")
-addToggle("Accept planned quests", -340, "autoAcceptQuest", "Accept automatically", "Accepts a quest only when it is already a step in the guide.")
+addToggle("Turn in completed quests", -224, "autoTurnIn", "Turn in automatically", "Turns in every completed quest when you talk to someone. A reward choice waits for you. An item quest in the guide is confirmed too.")
+addToggle("Accept planned quests", -250, "autoAcceptQuest", "Accept automatically", "Accepts a quest only when it is already a step in the guide.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -352,17 +290,11 @@ function ns.PaintOptions()
     if not options then return end
     silent = true
     local db = ns.ready and ns.CharDB() or {}
-    local router = db.router or "none"
-    for _, radio in ipairs(radios) do
-        radio:SetChecked(radio.value == router)
-    end
     for field, box in pairs(optionBoxes) do
         box:SetChecked(db[field] and true or false)
     end
     local missing
-    if router == "tomtom" and not ns.TomTomReady() then
-        missing = "TomTom is not loaded."
-    elseif router == "spf" and not ns.SpfReady() then
+    if ns.SpfReady and not ns.SpfReady() then
         missing = "Shortest Path Forever is not loaded."
     end
     routerStatus:SetText(missing or "")
@@ -429,18 +361,13 @@ navButton:SetScript("OnClick", function()
 end)
 navButton:SetScript("OnEnter", function()
     local db = ns.ready and ns.CharDB() or {}
-    local provider = db.router == "tomtom" and "TomTom"
-        or db.router == "spf" and "Shortest Path Forever"
     GameTooltip:SetOwner(navButton, "ANCHOR_RIGHT")
-    if not provider then
-        GameTooltip:SetText("Navigation", 1, 0.82, 0)
-        GameTooltip:AddLine("Choose TomTom or Shortest Path Forever under /ctl. This button stays inactive until then.", 1, 1, 1, true)
-    elseif db.navigating then
+    if db.navigating then
         GameTooltip:SetText("Navigation on", 1, 0.82, 0)
-        GameTooltip:AddLine("Turns " .. provider .. " off.", 1, 1, 1, true)
+        GameTooltip:AddLine("Turns Shortest Path Forever off.", 1, 1, 1, true)
     else
         GameTooltip:SetText("Navigation off", 1, 0.82, 0)
-        GameTooltip:AddLine("Turns " .. provider .. " on and sends the next 5 steps.", 1, 1, 1, true)
+        GameTooltip:AddLine("Turns Shortest Path Forever on and sends the next 5 steps.", 1, 1, 1, true)
     end
     GameTooltip:Show()
 end)
@@ -448,14 +375,7 @@ navButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 function ns.PaintNavigation()
     local db = ns.ready and ns.CharDB() or {}
-    local provider = db.router == "tomtom" or db.router == "spf"
     local icon = navButton.icon
-    if not provider then
-        navButton:Disable()
-        if icon.SetDesaturated then icon:SetDesaturated(true) end
-        icon:SetVertexColor(0.45, 0.45, 0.45)
-        return
-    end
     navButton:Enable()
     if icon.SetDesaturated then icon:SetDesaturated(false) end
     if db.navigating then
@@ -1020,19 +940,13 @@ end
 
 local function routeSentence()
     local db = ns.ready and ns.CharDB() or {}
-    if not db.router then
-        return "No default navigation. Choose one under /ctl.", false
-    end
     if db.navigating ~= true then
         return "Navigation is off.", false
     end
     if ns.routeStatus and ns.routeStatus ~= "" then
         return ns.routeStatus, ns.routeStatusError and true or false
     end
-    if db.router == "tomtom" and not ns.TomTomReady() then
-        return "TomTom is not loaded.", true
-    end
-    if db.router == "spf" and not ns.SpfReady() then
+    if ns.SpfReady and not ns.SpfReady() then
         return "Shortest Path Forever is not loaded.", true
     end
     return "Waypoints update when the current step is finished.", false
@@ -1054,10 +968,12 @@ function ns.RenderGuide(plan, err)
     for _, quest in ipairs(plan.quests or {}) do
         if quest.included then included = included + 1 end
     end
-    summary:SetText(string.format(
+    local summaryText = string.format(
         "%d of %d steps · %d of %d quests in the guide",
         shown, #(plan.steps or {}), included, #(plan.quests or {})
-    ))
+    )
+    if ns.tourPending then summaryText = summaryText .. "  ·  Sorting route…" end
+    summary:SetText(summaryText)
     local text, bad = routeSentence()
     routeLine:SetText(text or "")
     if bad then

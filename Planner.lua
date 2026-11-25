@@ -136,136 +136,308 @@ local function attachFollowup(turnin, followStops, nextName, nextId)
     end
 end
 
-local function here(player, areaId)
-    if not player or not areaId or areaId == 0 then return false end
-    if player.areaId and player.areaId == areaId then return true end
-    return player.zoneName and ns.ZoneName(areaId) == player.zoneName
+local EXACT_LIMIT = 8
+local IMPROVE_LIMIT = 40
+local FAR_ZONE = 1000000
+local FAR_WORLD = 100000000
+local UNREACHABLE = 1000000
+
+local function hasPoint(stop)
+    return type(stop) == "table"
+        and type(stop.areaId) == "number" and stop.areaId > 0
+        and type(stop.x) == "number" and type(stop.y) == "number"
 end
 
-local function orderStops(stops, objCount, player)
-    player = player or {}
-    local emittedObj, emittedTurnin, emittedAccept = {}, {}, {}
+-- Same zone uses the straight line. Another zone is only a stand-in until
+-- Shortest Path reports a travel time. Coordinates do not cross zone borders.
+function ns.CheapTravel(player, fromStop, toStop)
+    if not hasPoint(toStop) then return FAR_WORLD end
+    local from = fromStop or player
+    if type(from) == "table" and type(from.x) == "number" and type(from.y) == "number"
+        and type(from.areaId) == "number" and from.areaId == toStop.areaId then
+        local dx, dy = toStop.x - from.x, toStop.y - from.y
+        return dx * dx + dy * dy
+    end
+    if type(from) == "table" and type(from.areaId) == "number" and type(ns.ContinentOfArea) == "function" then
+        local left = from.continent or ns.ContinentOfArea(from.areaId)
+        local right = toStop.continent or ns.ContinentOfArea(toStop.areaId)
+        if left and right and left == right then return FAR_ZONE end
+    end
+    return FAR_WORLD
+end
 
-    local function ready(stop)
-        if stop.afterTurnin and not emittedTurnin[stop.afterTurnin] then return false end
-        if stop.afterAccept and not emittedAccept[stop.afterAccept] then return false end
-        if stop.kind == "turnin" then
-            return (emittedObj[stop.questId] or 0) >= (objCount[stop.questId] or 0)
+-- Open tour. `first` stays at the start when the player pinned a step.
+-- cost(fromIndex, toIndex) uses 0 for the player. ready(index, seen) is precedence.
+function ns.TourOrder(count, cost, ready, first)
+    if count < 1 then return {} end
+    local function nearest()
+        local order, seen = {}, {}
+        local from, start = 0, 1
+        if first then
+            order[1], seen[first], from, start = first, true, first, 2
+        end
+        for step = start, count do
+            local best, bestCost
+            for to = 1, count do
+                if not seen[to] and ready(to, seen) then
+                    local value = cost(from, to)
+                    if value ~= nil and (not best or value < bestCost or (value == bestCost and to < best)) then
+                        best, bestCost = to, value
+                    end
+                end
+            end
+            if not best then
+                for to = 1, count do
+                    if not seen[to] then best = to break end
+                end
+            end
+            if not best then break end
+            order[step], seen[best], from = best, true, best
+        end
+        return order
+    end
+
+    local function legCost(from, to)
+        local leg = cost(from, to)
+        if leg == nil then return FAR_WORLD end
+        return leg
+    end
+
+    local function total(order)
+        local sum, from = 0, 0
+        for _, to in ipairs(order) do
+            sum = sum + legCost(from, to)
+            from = to
+        end
+        return sum
+    end
+
+    local function legal(order)
+        local seen = {}
+        for _, index in ipairs(order) do
+            if not ready(index, seen) then return false end
+            seen[index] = true
         end
         return true
     end
 
-    local function take(stop)
-        stop.used = true
-        if stop.kind == "objective" then
-            emittedObj[stop.questId] = (emittedObj[stop.questId] or 0) + 1
-        elseif stop.kind == "accept" then
-            emittedAccept[stop.questId] = true
-        else
-            emittedTurnin[stop.questId] = true
+    local function exact(fallback)
+        local bits = {}
+        for index = 1, count do bits[index] = 2 ^ (index - 1) end
+        local memo, scratch = {}, {}
+        local function allowed(index, remaining)
+            for at = 1, count do scratch[at] = nil end
+            for at = 1, count do
+                if math.floor(remaining / bits[at]) % 2 == 0 then scratch[at] = true end
+            end
+            return ready(index, scratch)
         end
-    end
-
-    local ordered = {}
-
-    local function takeZone(areaId)
-        local cursorX, cursorY
-        if here(player, areaId) then cursorX, cursorY = player.x, player.y end
-        local guard = 0
-        while guard < 80 do
-            guard = guard + 1
-            local best, bestDistance, bestIndex
-            for index, stop in ipairs(stops) do
-                if not stop.used and (stop.areaId or 0) == areaId and ready(stop) then
-                    local distance
-                    if cursorX and stop.x and stop.y then
-                        local dx, dy = stop.x - cursorX, stop.y - cursorY
-                        distance = dx * dx + dy * dy
-                    else
-                        distance = stop.x and 1e9 or 1e11
-                    end
-                    if not best or distance < bestDistance or (distance == bestDistance and index < bestIndex) then
-                        best, bestDistance, bestIndex = stop, distance, index
+        local function solve(from, remaining)
+            if remaining == 0 then return 0 end
+            local states = memo[remaining]
+            if not states then
+                states = {}
+                memo[remaining] = states
+            end
+            if states[from] then return states[from].seconds end
+            local best, nextStop = math.huge, nil
+            for to = 1, count do
+                if math.floor(remaining / bits[to]) % 2 >= 1 and allowed(to, remaining) then
+                    local leg = cost(from, to)
+                    if leg ~= nil then
+                        local seconds = leg + solve(to, remaining - bits[to])
+                        if seconds < best then best, nextStop = seconds, to end
                     end
                 end
             end
-            if not best then return end
-            take(best)
-            ordered[#ordered + 1] = best
-            if best.x and best.y then cursorX, cursorY = best.x, best.y end
+            states[from] = { seconds = best, nextStop = nextStop }
+            return best
         end
+        local remaining = 2 ^ count - 1
+        local best = solve(0, remaining)
+        if best == math.huge or (fallback and total(fallback) <= best) then
+            return fallback
+        end
+        local order, from = {}, 0
+        for index = 1, count do
+            local row = memo[remaining] and memo[remaining][from]
+            local to = row and row.nextStop
+            if not to then return fallback end
+            order[index], remaining, from = to, remaining - bits[to], to
+        end
+        return order
     end
 
-    local function zoneScore(areaId)
-        local eligible, objectives = 0, 0
-        for _, stop in ipairs(stops) do
-            if not stop.used and (stop.areaId or 0) == areaId and ready(stop) then
-                eligible = eligible + 1
-                if stop.kind == "objective" then objectives = objectives + 1 end
-            end
-        end
-        if eligible == 0 then return nil end
-        local score = eligible * 20 + objectives * 50
-        if here(player, areaId) then score = score + 10000 end
-        if areaId ~= 0 and player.continent and ns.ContinentOfArea(areaId) == player.continent then
-            score = score + 700
-        end
-        if areaId == 0 then score = score - 2500 end
-        return score
-    end
-
-    local guard = 0
-    while guard <= #stops + 2 do
-        guard = guard + 1
-        local bestArea, bestScore
-        local pending = false
-        for _, stop in ipairs(stops) do
-            if not stop.used then
-                pending = true
-                local score = zoneScore(stop.areaId or 0)
-                if score and (not bestScore or score > bestScore) then
-                    bestArea, bestScore = stop.areaId or 0, score
-                end
-            end
-        end
-        if not pending then break end
-
-        if not bestArea then
-            for _, stop in ipairs(stops) do
-                if not stop.used then
-                    take(stop)
-                    ordered[#ordered + 1] = stop
+    local function improve(order, locked)
+        local left, right, saving
+        for i = locked + 1, #order - 1 do
+            local before, head = order[i - 1] or 0, order[i]
+            local oldEnter = legCost(before, head)
+            local forward, backward, broken = 0, 0, false
+            for j = i + 1, #order do
+                if broken then break end
+                local previous, last, after = order[j - 1], order[j], order[j + 1]
+                local reverse = cost(last, previous)
+                if reverse == nil then
+                    broken = true
                     break
                 end
-            end
-        else
-            -- A ready turn-in whose follow-up plays in the zone we would enter next
-            -- is done first, so both sets of objectives share one visit.
-            if not here(player, bestArea) then
-                for _, stop in ipairs(stops) do
-                    local turninArea = stop.areaId or 0
-                    if not stop.used and stop.kind == "turnin" and stop.nextArea == bestArea
-                        and turninArea ~= 0 and turninArea ~= bestArea and ready(stop) then
-                        bestArea = turninArea
-                        break
-                    end
-                end
-            end
-            local before = #ordered
-            takeZone(bestArea)
-            if #ordered == before then
-                for _, stop in ipairs(stops) do
-                    if not stop.used then
-                        take(stop)
-                        ordered[#ordered + 1] = stop
-                        break
+                forward = forward + legCost(previous, last)
+                backward = backward + reverse
+                local enter = cost(before, last)
+                if enter ~= nil then
+                    local leave = after and legCost(head, after) or 0
+                    local oldLeave = after and legCost(last, after) or 0
+                    local saved = (oldEnter + forward + oldLeave) - (enter + backward + leave)
+                    if saved > (saving or 0) then
+                        local candidate = {}
+                        for at = 1, #order do candidate[at] = order[at] end
+                        for at = i, j do candidate[at] = order[j - (at - i)] end
+                        if legal(candidate) and total(candidate) < total(order) then
+                            left, right, saving = i, j, saved
+                        end
                     end
                 end
             end
         end
+        if not left then return nil end
+        local improved = {}
+        for at = 1, #order do improved[at] = order[at] end
+        for at = left, right do improved[at] = order[right - (at - left)] end
+        return improved
     end
 
-    return ordered
+    local order = nearest()
+    if not first and count <= EXACT_LIMIT then order = exact(order) or order end
+    if order and #order <= IMPROVE_LIMIT then
+        local locked = first and 1 or 0
+        local guard = 0
+        while order and guard < 12 do
+            guard = guard + 1
+            local improved = improve(order, locked)
+            if not improved then break end
+            order = improved
+        end
+    end
+    return order or {}
+end
+
+-- Shortest travel order that still turns a quest in after its objectives and
+-- accepts a follow-up before that follow-up's own steps. Steps without a point
+-- stay attached to their quest and do not pull the tour.
+function ns.OrderStops(stops, _, player, cost, pinKey)
+    player = player or {}
+    cost = cost or function(fromStop, toStop)
+        return ns.CheapTravel(player, fromStop, toStop)
+    end
+    local pool, tail = {}, {}
+    local skipped = ns.CharDB and ns.CharDB().skipped or nil
+    for _, stop in ipairs(stops or {}) do
+        local key = ns.StepKey(stop)
+        if type(skipped) == "table" and skipped[key] then
+            stop.skipped = true
+            tail[#tail + 1] = stop
+        else
+            stop.skipped = nil
+            pool[#pool + 1] = stop
+        end
+    end
+
+    local objectives, turnin, accept = {}, {}, {}
+    for _, stop in ipairs(pool) do
+        local questId = stop.questId
+        if stop.kind == "objective" then
+            local list = objectives[questId]
+            if not list then
+                list = {}
+                objectives[questId] = list
+            end
+            list[#list + 1] = stop
+        elseif stop.kind == "accept" then
+            accept[questId] = stop
+        elseif stop.kind == "turnin" then
+            turnin[questId] = stop
+        end
+    end
+
+    local geo, geoOf = {}, {}
+    for _, stop in ipairs(pool) do
+        if hasPoint(stop) then
+            geo[#geo + 1] = stop
+            geoOf[stop] = #geo
+        end
+    end
+
+    local blockers = {}
+    for index = 1, #geo do blockers[index] = {} end
+    local function block(index, stop)
+        local other = stop and geoOf[stop]
+        if other and other ~= index then blockers[index][#blockers[index] + 1] = other end
+    end
+    for index, stop in ipairs(geo) do
+        if stop.kind == "turnin" then
+            for _, obj in ipairs(objectives[stop.questId] or {}) do block(index, obj) end
+        end
+        if stop.afterAccept then block(index, accept[stop.afterAccept]) end
+        if stop.afterTurnin then
+            local prev = turnin[stop.afterTurnin]
+            if prev and geoOf[prev] then
+                block(index, prev)
+            else
+                for _, obj in ipairs(objectives[stop.afterTurnin] or {}) do block(index, obj) end
+            end
+        end
+    end
+
+    local function ready(index, seen)
+        for _, other in ipairs(blockers[index]) do
+            if not seen[other] then return false end
+        end
+        return true
+    end
+
+    local first
+    if type(pinKey) == "string" then
+        for index, stop in ipairs(geo) do
+            if ns.StepKey(stop) == pinKey then first = index break end
+        end
+    end
+
+    local function indexCost(from, to)
+        return cost(from > 0 and geo[from] or nil, geo[to])
+    end
+
+    local indexes = ns.TourOrder(#geo, indexCost, ready, first)
+    local geoOrder = {}
+    for _, index in ipairs(indexes) do geoOrder[#geoOrder + 1] = geo[index] end
+
+    local placed, emitting, result = {}, {}, {}
+    local function emit(stop)
+        if not stop or placed[stop] or emitting[stop] then return end
+        emitting[stop] = true
+        if stop.afterTurnin then emit(turnin[stop.afterTurnin]) end
+        if stop.afterAccept then emit(accept[stop.afterAccept]) end
+        if stop.kind == "turnin" then
+            for _, obj in ipairs(objectives[stop.questId] or {}) do emit(obj) end
+        end
+        emitting[stop] = nil
+        if placed[stop] then return end
+        placed[stop] = true
+        result[#result + 1] = stop
+    end
+    for _, stop in ipairs(geoOrder) do emit(stop) end
+    for _, stop in ipairs(pool) do emit(stop) end
+    if type(pinKey) == "string" then
+        for index, stop in ipairs(result) do
+            if ns.StepKey(stop) == pinKey and index ~= 1 then
+                table.remove(result, index)
+                table.insert(result, 1, stop)
+                break
+            end
+        end
+    end
+    for _, stop in ipairs(tail) do result[#result + 1] = stop end
+    return result
 end
 
 function ns.QuestView(rows)
@@ -533,10 +705,129 @@ function ns.BuildPlan(rows, player)
         end
     end
 
-    local ordered = ns.ApplySkips(orderStops(stops, objCount, player))
+    local ordered = ns.ApplySkips(ns.OrderStops(stops, objCount, player))
     return {
         quests = ns.WithPendingQuests(view, rows, ordered),
         steps = ordered,
         warning = warning,
     }
+end
+
+local function travelPoint(spot)
+    if type(spot) ~= "table" or type(ns.UiMap) ~= "function" or type(ns.MapFraction) ~= "function" then
+        return nil
+    end
+    local map = ns.UiMap(spot.areaId)
+    local x, y = ns.MapFraction(spot.x), ns.MapFraction(spot.y)
+    if type(map) ~= "number" or not x or not y then return nil end
+    return map, x, y
+end
+
+local function estimateApi()
+    local api = type(ShortestPathForever) == "table" and ShortestPathForever.API or nil
+    if type(api) ~= "table" or type(api.Estimate) ~= "function" then return nil end
+    return api
+end
+
+function ns.ApplyTour(plan, ordered, epoch)
+    if epoch ~= ns.tourEpoch or ns.lastPlan ~= plan or type(ordered) ~= "table" then return end
+    local live = {}
+    for _, stop in ipairs(plan.steps or {}) do live[stop] = true end
+    local nextSteps, seen = {}, {}
+    for _, stop in ipairs(ordered) do
+        if live[stop] and not seen[stop] then
+            nextSteps[#nextSteps + 1] = stop
+            seen[stop] = true
+        end
+    end
+    for _, stop in ipairs(plan.steps or {}) do
+        if not seen[stop] then nextSteps[#nextSteps + 1] = stop end
+    end
+    plan.steps = ns.ApplySkips(nextSteps)
+    local start = 1
+    while plan.steps[start] and plan.steps[start].skipped do start = start + 1 end
+    if not plan.steps[start] then start = 1 end
+    if #plan.steps > 0 and start > #plan.steps then start = #plan.steps end
+    ns.windowStart = start
+    ns.tourPending = false
+    if ns.Render then ns.Render(plan, ns.lastErr) end
+    local db = ns.CharDB and ns.CharDB() or nil
+    if db and db.navigating == true and ns.PushRoute then
+        ns.PushRoute(plan, start, { plan = true })
+    end
+end
+
+-- One uncached Shortest Path estimate per frame. The cheap order stays up until this finishes.
+function ns.ScheduleTour(plan, player, pinKey)
+    ns.tourEpoch = (ns.tourEpoch or 0) + 1
+    local epoch = ns.tourEpoch
+    ns.tourPending = false
+    local api = estimateApi()
+    local steps = plan and plan.steps
+    if not api or type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then return end
+    if type(steps) ~= "table" then return end
+    local mappable = 0
+    for _, stop in ipairs(steps) do
+        if travelPoint(stop) then mappable = mappable + 1 end
+    end
+    if mappable < 2 then return end
+
+    local ids = {}
+    for index, stop in ipairs(steps) do ids[stop] = index end
+    local cache = {}
+    local function yieldingCost(fromStop, toStop)
+        local key = (fromStop and ids[fromStop] or 0) .. ":" .. (ids[toStop] or 0)
+        local cached = cache[key]
+        if cached == nil then
+            cached = coroutine.yield("need", fromStop, toStop)
+            cache[key] = cached
+        end
+        return cached
+    end
+
+    local function ask(fromStop, toStop)
+        local fromMap, fromX, fromY = travelPoint(fromStop or player)
+        local toMap, toX, toY = travelPoint(toStop)
+        if not fromMap or not toMap then return UNREACHABLE, "unreachable" end
+        local ok, seconds, reason = pcall(api.Estimate, fromMap, fromX, fromY, toMap, toX, toY)
+        if not ok then return UNREACHABLE, "unreachable" end
+        if type(seconds) == "number" then return seconds end
+        return nil, reason or "loading"
+    end
+
+    local worker = coroutine.create(function()
+        return ns.OrderStops(steps, nil, player, yieldingCost, pinKey)
+    end)
+
+    local function step(value)
+        if epoch ~= ns.tourEpoch then return end
+        local ok, tag, fromStop, toStop = coroutine.resume(worker, value)
+        if epoch ~= ns.tourEpoch then return end
+        if not ok then
+            ns.tourPending = false
+            return
+        end
+        if coroutine.status(worker) == "dead" then
+            ns.tourPending = false
+            if type(tag) == "table" then ns.ApplyTour(plan, tag, epoch) end
+            return
+        end
+        if tag ~= "need" then
+            C_Timer.After(0, function() step(nil) end)
+            return
+        end
+        local function deliver()
+            if epoch ~= ns.tourEpoch then return end
+            local seconds, reason = ask(fromStop, toStop)
+            if seconds == nil and reason ~= "unreachable" then
+                C_Timer.After(0.25, deliver)
+                return
+            end
+            C_Timer.After(0, function() step(seconds or UNREACHABLE) end)
+        end
+        deliver()
+    end
+
+    ns.tourPending = true
+    C_Timer.After(0, function() step(nil) end)
 end

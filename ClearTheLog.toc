@@ -2,10 +2,9 @@
 ## Title: Clear the Log
 ## Notes: Plans a short route for the quests in your log
 ## Author: ClearTheLog
-## Version: 0.3.19
+## Version: 0.3.20
 ## Category: Quests
-## Dependencies: QuestieDB
-## OptionalDeps: TomTom, ShortestPathForever
+## Dependencies: QuestieDB, ShortestPathForever
 ## SavedVariablesPerCharacter: ClearTheLogCharDB
 ## IconTexture: Interface\Icons\INV_Misc_Map_01
 

@@ -210,7 +210,7 @@ function ns.UiMap(areaId)
     return nil
 end
 
--- Plan coordinates are questie-style 0-100. TomTom and Shortest Path want 0-1.
+-- Plan coordinates are questie-style 0-100. Shortest Path wants 0-1.
 function ns.MapFraction(value)
     if type(value) ~= "number" then return nil end
     local fraction = value / 100

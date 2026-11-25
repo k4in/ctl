@@ -90,10 +90,10 @@ function ns.CharDB()
         db.legacyMode = db.mode
     end
     db.migrated = true
-    if db.router ~= "tomtom" and db.router ~= "spf" then db.router = nil end
-    -- A saved router used to mean navigation was on. Remember that once.
-    if db.navigating == nil then db.navigating = db.router ~= nil end
-    if db.navigating ~= true or not db.router then db.navigating = false end
+    -- Navigation used to remember a TomTom or Shortest Path choice. Shortest Path is the only provider now.
+    if db.navigating == nil then db.navigating = db.router == "tomtom" or db.router == "spf" end
+    if db.navigating ~= true then db.navigating = false end
+    db.router = nil
     if db.guideShown ~= true then db.guideShown = false end
     if db.refreshAccept == nil then db.refreshAccept = true end
     if db.refreshTurnin == nil then db.refreshTurnin = true end
@@ -502,7 +502,6 @@ end
 function ns.ToggleNavigation()
     if not ns.ready then return false end
     local db = ns.CharDB()
-    if db.router ~= "tomtom" and db.router ~= "spf" then return false end
     db.navigating = not db.navigating
     ns.routeFrom = nil
     ns.RequestRefresh("router")
@@ -913,6 +912,10 @@ function ns.Refresh(reasons)
         pruneSkips(rows, plan)
         ns.windowStart = 1
         if ns.DropFinishedSteps then ns.DropFinishedSteps(plan, rows) end
+        if ns.ScheduleTour then
+            local pin = reasons.plan and type(origin) == "table" and origin.key or nil
+            ns.ScheduleTour(plan, player, pin)
+        end
         if ns.QuestView and ns.WithPendingQuests then
             plan.quests = ns.WithPendingQuests(ns.QuestView(rows), rows, plan.steps)
         end
