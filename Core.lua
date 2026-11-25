@@ -204,6 +204,49 @@ function ns.SetAllQuests(included)
     if ns.RequestRefresh then ns.RequestRefresh("manual") end
 end
 
+-- Every quest and every chain follow-up leaves the guide.
+function ns.ResetGuide()
+    if not ns.ready then return end
+    local db = ns.CharDB()
+    local ids = {}
+    local function add(id)
+        if type(id) == "number" and id > 0 then ids[id] = true end
+    end
+    for _, quest in ipairs(ns.lastPlan and ns.lastPlan.quests or {}) do
+        add(quest.id)
+        local chain = quest.chain
+        if type(chain) == "table" and type(chain.ids) == "table" then
+            for _, id in ipairs(chain.ids) do add(id) end
+        end
+    end
+    if type(db.tracked) == "table" then
+        for id in pairs(db.tracked) do add(id) end
+    end
+    if type(db.handoff) == "table" then
+        for acceptId, fromId in pairs(db.handoff) do
+            add(acceptId)
+            add(fromId)
+        end
+    end
+    if type(db.chain) == "table" then
+        for id in pairs(db.chain) do add(id) end
+    end
+    for id in pairs(ids) do
+        db.tracked[id] = false
+        db.decided[id] = true
+        db.chain[id] = false
+        db.chainThrough[id] = nil
+        db.chainOff[id] = true
+    end
+    db.handoff = {}
+    if type(db.skipped) == "table" then
+        for key in pairs(db.skipped) do db.skipped[key] = nil end
+    end
+    ns.routeFrom = nil
+    ns.routeOrigin = nil
+    if ns.RequestRefresh then ns.RequestRefresh("manual") end
+end
+
 function ns.SetChainEnabled(questId, enabled)
     local db = ns.CharDB()
     db.chain[questId] = enabled and true or false
@@ -620,25 +663,60 @@ local function applyPendingSkip(plan)
     ns.windowStart = start
 end
 
--- Finished steps at the front of the window drop away. Later finished steps wait.
-local function catchUp(plan, rows)
+-- A follow-up stays reserved only while it is still ahead and still wanted.
+function ns.FollowupReserved(acceptId, fromId, live)
+    if type(acceptId) ~= "number" or acceptId <= 0 then return false end
+    if type(live) == "table" and live[acceptId] ~= nil then return false end
+    if ns.IsQuestDone and ns.IsQuestDone(acceptId) then return false end
+    local db = ns.CharDB()
+    if db.tracked[acceptId] == false then return false end
+    if type(fromId) == "number" and type(live) == "table" and live[fromId] ~= nil then
+        if not ns.IsIncluded(fromId) then return false end
+        if type(ns.ChainInfo) ~= "function" or type(ns.ChainCutoff) ~= "function" then return true end
+        local chain = ns.ChainInfo(fromId)
+        if type(chain) ~= "table" or type(chain.ids) ~= "table" then return true end
+        local cutoff = ns.ChainCutoff(fromId, chain)
+        if cutoff == fromId then return false end
+        local passed = false
+        for _, id in ipairs(chain.ids) do
+            if not passed then
+                if id == fromId then passed = true end
+            else
+                if id == acceptId then return true end
+                if id == cutoff then return false end
+            end
+        end
+        return false
+    end
+    return true
+end
+
+-- Finished steps leave the plan even when they are not the current step.
+function ns.DropFinishedSteps(plan, rows)
     if type(ns.SyncStop) ~= "function" then return false end
-    local steps = plan and plan.steps or {}
+    local steps = plan and plan.steps
+    if type(steps) ~= "table" then return false end
     local byId = rowsById(rows)
-    for index = 1, #steps do
-        ns.SyncStop(steps[index], byId[steps[index].questId], byId)
+    local kept = {}
+    local changed = false
+    local skipped = ns.CharDB().skipped
+    for _, stop in ipairs(steps) do
+        if ns.SyncStop(stop, byId[stop.questId], byId) then
+            changed = true
+            if type(skipped) == "table" and ns.StepKey then skipped[ns.StepKey(stop)] = nil end
+        else
+            kept[#kept + 1] = stop
+        end
     end
-    local start = ns.windowStart or 1
-    if type(start) ~= "number" or start < 1 then start = 1 end
-    local before = start
-    while start <= #steps do
-        local stop = steps[start]
-        if stop.skipped then break end
-        if not ns.SyncStop(stop, byId[stop.questId], byId) then break end
-        start = start + 1
-    end
+    if not changed then return false end
+    for index = #steps, 1, -1 do steps[index] = nil end
+    for index, stop in ipairs(kept) do steps[index] = stop end
+    local start = 1
+    while steps[start] and steps[start].skipped do start = start + 1 end
+    if not steps[start] then start = 1 end
+    if #steps > 0 and start > #steps then start = #steps end
     ns.windowStart = start
-    return start ~= before
+    return true
 end
 
 local function handoffParent(questId)
@@ -704,13 +782,15 @@ local function rememberHandoffs(plan, rows)
     end
     local found = {}
     for _, stop in ipairs(plan and plan.steps or {}) do
-        if stop.kind == "turnin" and type(stop.acceptId) == "number" and not live[stop.acceptId] then
+        if stop.kind == "turnin" and type(stop.acceptId) == "number"
+            and ns.FollowupReserved(stop.acceptId, stop.questId, live) then
             found[stop.acceptId] = stop.questId
-        elseif stop.kind == "accept" and type(stop.questId) == "number" and not live[stop.questId]
-            and not found[stop.questId] then
+        elseif stop.kind == "accept" and type(stop.questId) == "number" and not found[stop.questId] then
             local fromId = stop.afterTurnin
             if type(fromId) ~= "number" or fromId <= 0 then fromId = stop.questId end
-            found[stop.questId] = fromId
+            if ns.FollowupReserved(stop.questId, fromId, live) then
+                found[stop.questId] = fromId
+            end
         end
     end
     local previous = db.handoff
@@ -720,8 +800,7 @@ local function rememberHandoffs(plan, rows)
     end
     if type(previous) == "table" then
         for acceptId, fromId in pairs(previous) do
-            if not live[acceptId] and not live[fromId] and not handoff[acceptId]
-                and (not ns.IsIncluded or ns.IsIncluded(acceptId)) then
+            if not handoff[acceptId] and ns.FollowupReserved(acceptId, fromId, live) then
                 handoff[acceptId] = fromId
             end
         end
@@ -818,14 +897,19 @@ function ns.Refresh(reasons)
             ns.PromoteStep(plan.steps, origin.key)
         end
         pruneSkips(rows, plan)
+        ns.windowStart = 1
+        if ns.DropFinishedSteps then ns.DropFinishedSteps(plan, rows) end
+        if ns.QuestView and ns.WithPendingQuests then
+            plan.quests = ns.WithPendingQuests(ns.QuestView(rows), rows, plan.steps)
+        end
         rememberHandoffs(plan, rows)
         ns.lastPlan, ns.lastErr = plan, err
-        ns.windowStart = 1
-        local first = plan.steps and plan.steps[1]
+        local fromIndex = ns.windowStart or 1
+        local first = plan.steps and plan.steps[fromIndex]
         local giver = first and ns.AcceptTarget and ns.AcceptTarget(first)
         ns.acceptRouted = (type(giver) == "table" and ns.HasMapPoint and ns.HasMapPoint(giver)) and true or nil
         if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
-            ns.PushRoute(plan, 1, reasons)
+            ns.PushRoute(plan, fromIndex, reasons)
         end
         if ns.PaintOptions then ns.PaintOptions() end
         if ns.Render then ns.Render(plan, err) end
@@ -833,6 +917,12 @@ function ns.Refresh(reasons)
     end
 
     local plan = ns.lastPlan
+    ns.lastErr = err
+    if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then
+        ns.windowStart = routeFrom
+    end
+    if reasons.skip then applyPendingSkip(plan) end
+    if ns.DropFinishedSteps and ns.DropFinishedSteps(plan, rows) then reasons.advance = true end
     if ns.QuestView then
         plan.quests = ns.QuestView(rows)
         if ns.WithPendingQuests then
@@ -840,12 +930,6 @@ function ns.Refresh(reasons)
         end
     end
     rememberHandoffs(plan, rows)
-    ns.lastErr = err
-    if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then
-        ns.windowStart = routeFrom
-    end
-    if reasons.skip then applyPendingSkip(plan) end
-    if catchUp(plan, rows) then reasons.advance = true end
     local current = plan and plan.steps and plan.steps[ns.windowStart or 1]
     local giver = current and ns.AcceptTarget and ns.AcceptTarget(current)
     local redirect = type(giver) == "table" and ns.HasMapPoint and ns.HasMapPoint(giver)

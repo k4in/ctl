@@ -456,8 +456,25 @@ local function bestObjective(stop, row)
     return best
 end
 
--- Updates the live counter on a step that is still in the plan. A finished
--- leading step is how the window advances; the step list itself stays put.
+-- A later quest already in the log means this one was accepted and turned in.
+local function laterQuestInLog(questId, inLog)
+    if type(questId) ~= "number" or type(inLog) ~= "table" or type(ns.ChainInfo) ~= "function" then
+        return false
+    end
+    local chain = ns.ChainInfo(questId)
+    if type(chain) ~= "table" or type(chain.ids) ~= "table" then return false end
+    local passed = false
+    for _, id in ipairs(chain.ids) do
+        if id == questId then
+            passed = true
+        elseif passed and inLog[id] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+-- True when this step is already done, wherever it sits in the plan.
 function ns.SyncStop(stop, row, inLog)
     if type(stop) ~= "table" then return false end
     local present = type(row) == "table"
@@ -465,9 +482,11 @@ function ns.SyncStop(stop, row, inLog)
         stop.followup = nil
         if stop.note == "not in the log yet" then stop.note = nil end
     end
+    local questId = stop.questId
+    if not present and type(questId) == "number" and ns.IsQuestDone(questId) then return true end
     if stop.kind == "accept" then
-        local questId = stop.questId
-        return type(inLog) == "table" and type(questId) == "number" and inLog[questId] ~= nil
+        if present then return true end
+        return laterQuestInLog(questId, inLog)
     end
     if stop.kind == "turnin" then
         stop.awaitAccept = nil

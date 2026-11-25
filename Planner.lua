@@ -495,9 +495,8 @@ function ns.BuildPlan(rows, player)
     local handoff = ns.CharDB().handoff
     if dbReady and type(handoff) == "table" then
         local pending = {}
-        for acceptId in pairs(handoff) do
-            if type(acceptId) == "number" and not inLog[acceptId] and not addedFollow[acceptId]
-                and (not ns.IsIncluded or ns.IsIncluded(acceptId)) then
+        for acceptId, fromId in pairs(handoff) do
+            if not addedFollow[acceptId] and ns.FollowupReserved(acceptId, fromId, inLog) then
                 pending[#pending + 1] = acceptId
             end
         end

@@ -599,9 +599,12 @@ local function stepRow(parent)
     row.hover:SetColorTexture(1, 1, 1, 0.05)
     row.hover:Hide()
 
-    row.mark = row:CreateTexture(nil, "OVERLAY")
-    row.mark:SetSize(18, 18)
-    row.mark:Hide()
+    row.badge = CreateFrame("Frame", nil, row)
+    row.badge:SetSize(18, 18)
+    row.badge:SetPoint("TOPLEFT", 8, -4)
+    row.mark = row.badge:CreateTexture(nil, "ARTWORK")
+    row.mark:SetAllPoints()
+    row.badge:Hide()
 
     row.action = CreateFrame("Button", nil, row)
     row.action:SetSize(22, 22)
@@ -870,28 +873,33 @@ local function showCurrent(row, lines, inset, left)
 end
 
 local function paintMark(row, stop, here)
+    local badge = row.badge
     local mark = row.mark
-    if not stop then
-        mark:Hide()
+    if not stop or not badge or not mark then
+        if badge then badge:Hide() end
         return false
     end
     local path = ns.StepIcon and ns.StepIcon(stop)
     if type(path) ~= "string" or path == "" then
-        mark:Hide()
+        badge:Hide()
         return false
     end
+    badge:Show()
     if mark:SetTexture(path) == false then
-        mark:Hide()
+        badge:Hide()
         return false
     end
     mark:SetTexCoord(0, 1, 0, 1)
-    mark:ClearAllPoints()
+    badge:ClearAllPoints()
     if here then
-        mark:SetSize(22, 22)
-        mark:SetPoint("TOPLEFT", 10, -30)
+        badge:SetSize(22, 22)
+        badge:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -30)
     else
-        mark:SetSize(18, 18)
-        mark:SetPoint("LEFT", 8, 0)
+        badge:SetSize(18, 18)
+        badge:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -4)
+    end
+    if badge.SetFrameLevel and row.GetFrameLevel then
+        badge:SetFrameLevel(row:GetFrameLevel() + 5)
     end
     if stop.skipped then
         if mark.SetDesaturated then mark:SetDesaturated(true) end
@@ -1128,10 +1136,10 @@ end)
 local removeAll = CreateFrame("Button", nil, quests, "UIPanelButtonTemplate")
 removeAll:SetSize(120, 22)
 removeAll:SetPoint("LEFT", addAll, "RIGHT", 8, 0)
-removeAll:SetText("Remove all")
-bindTip(removeAll, "Remove all", "Takes every logged quest out of the guide. Follow-ups leave the route with that quest.")
+removeAll:SetText("Reset")
+bindTip(removeAll, "Reset", "Clears the guide. Every quest comes out, including chain follow-ups.")
 removeAll:SetScript("OnClick", function()
-    if ns.SetAllQuests then ns.SetAllQuests(false) end
+    if ns.ResetGuide then ns.ResetGuide() end
 end)
 
 local questHint = quests:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
