@@ -86,6 +86,7 @@ local function fallbackStops(row)
                     numFulfilled = line.numFulfilled,
                     numRequired = line.numRequired,
                     objectiveDone = false,
+                    icon = "event",
                 }
             end
         end
@@ -99,6 +100,7 @@ local function fallbackStops(row)
         areaId = 0,
         note = note,
         dungeon = dungeon or nil,
+        icon = "complete",
     }
     return stops
 end

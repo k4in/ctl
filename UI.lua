@@ -599,6 +599,10 @@ local function stepRow(parent)
     row.hover:SetColorTexture(1, 1, 1, 0.05)
     row.hover:Hide()
 
+    row.mark = row:CreateTexture(nil, "OVERLAY")
+    row.mark:SetSize(18, 18)
+    row.mark:Hide()
+
     row.action = CreateFrame("Button", nil, row)
     row.action:SetSize(22, 22)
     row.action:SetPoint("RIGHT", -8, 0)
@@ -766,9 +770,9 @@ local function locationText(areaId, x, y)
     return place or coord
 end
 
-local function anchorLine(row, top, inset, large)
+local function anchorLine(row, top, inset, large, left)
     row.line:ClearAllPoints()
-    row.line:SetPoint("TOPLEFT", 12, top)
+    row.line:SetPoint("TOPLEFT", left or 12, top)
     row.line:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
     local font = GameFontHighlight
     if large and GameFontNormalLarge then font = GameFontNormalLarge end
@@ -843,16 +847,17 @@ local function currentDetails(stop)
     return lines
 end
 
-local function showCurrent(row, lines, inset)
+local function showCurrent(row, lines, inset, left)
     row.header:Show()
     row.sub:Hide()
     local top = -78
     local shown = 0
+    left = left or 24
     for index, line in ipairs(lines) do
         if index > #row.details then break end
         local widget = row.details[index]
         widget:ClearAllPoints()
-        widget:SetPoint("TOPLEFT", 24, top)
+        widget:SetPoint("TOPLEFT", left, top)
         widget:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
         widget:SetText(line.text)
         widget:SetTextColor(line.r, line.g, line.b)
@@ -862,6 +867,41 @@ local function showCurrent(row, lines, inset)
     end
     for index = shown + 1, #row.details do row.details[index]:Hide() end
     return math.max(124, 86 + shown * 16)
+end
+
+local function paintMark(row, stop, here)
+    local mark = row.mark
+    if not stop then
+        mark:Hide()
+        return false
+    end
+    local path = ns.StepIcon and ns.StepIcon(stop)
+    if type(path) ~= "string" or path == "" then
+        mark:Hide()
+        return false
+    end
+    if mark:SetTexture(path) == false then
+        mark:Hide()
+        return false
+    end
+    mark:SetTexCoord(0, 1, 0, 1)
+    mark:ClearAllPoints()
+    if here then
+        mark:SetSize(22, 22)
+        mark:SetPoint("TOPLEFT", 10, -30)
+    else
+        mark:SetSize(18, 18)
+        mark:SetPoint("LEFT", 8, 0)
+    end
+    if stop.skipped then
+        if mark.SetDesaturated then mark:SetDesaturated(true) end
+        mark:SetVertexColor(0.55, 0.55, 0.55)
+    else
+        if mark.SetDesaturated then mark:SetDesaturated(false) end
+        mark:SetVertexColor(1, 1, 1)
+    end
+    mark:Show()
+    return true
 end
 
 local function fillSteps(steps)
@@ -901,24 +941,28 @@ local function fillSteps(steps)
         end
 
         local height = ROW_STEP
+        local marked = paintMark(row, stop, here)
+        local textLeft = marked and (here and 40 or 32) or 12
         if not stop then
             hideDetails(row)
             row.sub:Show()
             row.sub:SetText("")
-            anchorLine(row, -12, 10, false)
+            anchorLine(row, -12, 10, false, textLeft)
             row.line:SetText("No steps. The log is empty, or no quest is in the guide.")
             row.line:SetTextColor(0.7, 0.7, 0.7)
         elseif here then
-            anchorLine(row, -28, inset, true)
+            row.header:ClearAllPoints()
+            row.header:SetPoint("TOPLEFT", textLeft, -8)
+            anchorLine(row, -28, inset, true, textLeft)
             local tag, label = stepCaption(stop, true)
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
             row.line:SetTextColor(1, 0.86, 0.35)
-            height = showCurrent(row, currentDetails(stop), inset)
+            height = showCurrent(row, currentDetails(stop), inset, textLeft)
         else
             hideDetails(row)
             row.sub:Show()
-            anchorLine(row, -4, inset, false)
+            anchorLine(row, -4, inset, false, textLeft)
             local tag, label = stepCaption(stop, false)
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
@@ -941,7 +985,7 @@ local function fillSteps(steps)
                 bits[#bits + 1] = "no map"
             end
             row.sub:ClearAllPoints()
-            row.sub:SetPoint("TOPLEFT", 24, -22)
+            row.sub:SetPoint("TOPLEFT", marked and textLeft or 24, -22)
             row.sub:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
             row.sub:SetText(table.concat(bits, "   ·   "))
             if stop.skipped then

@@ -494,6 +494,159 @@ function ns.SyncStop(stop, row, inLog)
     return true
 end
 
+-- Questie icon type numbers. Zero means the objective has no override.
+local ICON_NAME = {
+    [1] = "slay",
+    [2] = "loot",
+    [3] = "event",
+    [4] = "object",
+    [5] = "talk",
+    [6] = "available",
+    [7] = "available_gray",
+    [8] = "complete",
+    [9] = "glow",
+    [10] = "repeatable",
+    [11] = "repeatable_complete",
+    [12] = "incomplete",
+    [13] = "eventquest",
+    [14] = "eventquest_complete",
+    [15] = "pvpquest",
+    [16] = "pvpquest_complete",
+    [17] = "interact",
+    [18] = "sod_rune",
+    [19] = "mount_up",
+    [20] = "node_fish",
+    [21] = "node_herb",
+    [22] = "node_ore",
+    [23] = "chest",
+    [24] = "petbattle",
+}
+
+local ICON_PATH = {
+    slay = "Interface\\Addons\\Questie\\Icons\\slay.blp",
+    loot = "Interface\\Addons\\Questie\\Icons\\loot.blp",
+    event = "Interface\\Addons\\Questie\\Icons\\event.blp",
+    object = "Interface\\Addons\\Questie\\Icons\\object.blp",
+    talk = "Interface\\Addons\\Questie\\Icons\\chatbubblegossipicon.blp",
+    available = "Interface\\Addons\\Questie\\Icons\\available.blp",
+    available_gray = "Interface\\Addons\\Questie\\Icons\\available_gray.blp",
+    complete = "Interface\\Addons\\Questie\\Icons\\complete.blp",
+    incomplete = "Interface\\Addons\\Questie\\Icons\\incomplete.blp",
+    interact = "Interface\\Addons\\Questie\\Icons\\interact.blp",
+    mount_up = "Interface\\Addons\\Questie\\Icons\\mount_up.blp",
+    glow = "Interface\\Addons\\Questie\\Icons\\glow.blp",
+    repeatable = "Interface\\Addons\\Questie\\Icons\\repeatable.blp",
+    repeatable_complete = "Interface\\Addons\\Questie\\Icons\\repeatable_complete.blp",
+    eventquest = "Interface\\Addons\\Questie\\Icons\\eventquest.blp",
+    eventquest_complete = "Interface\\Addons\\Questie\\Icons\\eventquest_complete.blp",
+    pvpquest = "Interface\\Addons\\Questie\\Icons\\pvpquest.blp",
+    pvpquest_complete = "Interface\\Addons\\Questie\\Icons\\pvpquest_complete.blp",
+    sod_rune = "Interface\\Addons\\Questie\\Icons\\sod_rune.tga",
+    node_fish = "Interface\\Addons\\Questie\\Icons\\node_fish.blp",
+    node_herb = "Interface\\Addons\\Questie\\Icons\\node_herb.blp",
+    node_ore = "Interface\\Addons\\Questie\\Icons\\node_ore.blp",
+    chest = "Interface\\Addons\\Questie\\Icons\\chest.blp",
+    petbattle = "Interface\\Addons\\Questie\\Icons\\petbattle.png",
+}
+
+local ICON_TYPE = {}
+for id, name in pairs(ICON_NAME) do ICON_TYPE[name] = id end
+
+local function namedIcon(value)
+    if type(value) ~= "number" or value <= 0 then return nil end
+    return ICON_NAME[value]
+end
+
+local function listHasEntry(list)
+    return type(list) == "table" and list[1] ~= nil
+end
+
+-- A collect objective that only comes from objects uses the object icon.
+local function itemSourceIcon(itemId)
+    if type(itemId) ~= "number" or itemId <= 0 or type(ItemDB) ~= "table" then return nil end
+    local npc, object = false, false
+    if type(ItemDB.npcDrops) == "function" then
+        local ok, drops = pcall(ItemDB.npcDrops, itemId)
+        npc = ok and listHasEntry(drops)
+    end
+    if type(ItemDB.objectDrops) == "function" then
+        local ok, drops = pcall(ItemDB.objectDrops, itemId)
+        object = ok and listHasEntry(drops)
+    end
+    if object and not npc then return "object" end
+    return nil
+end
+
+local function itemIcon(iconField, itemId)
+    return namedIcon(iconField) or itemSourceIcon(itemId) or "loot"
+end
+
+local function playerSide()
+    if type(UnitFactionGroup) ~= "function" then return nil end
+    local ok, faction = pcall(UnitFactionGroup, "player")
+    if not ok then return nil end
+    faction = ns.Plain(faction)
+    if faction == "Alliance" then return "A" end
+    if faction == "Horde" then return "H" end
+    return nil
+end
+
+-- A creature objective with no icon is a talk step when that NPC is friendly.
+local function friendlyNpc(id, side)
+    if type(id) ~= "number" or id <= 0 then return nil end
+    if type(NpcDB) ~= "table" or type(NpcDB.friendlyToFaction) ~= "function" then return nil end
+    local ok, value = pcall(NpcDB.friendlyToFaction, id)
+    if not ok or type(value) ~= "string" or value == "" then return false end
+    if value == "AH" then return true end
+    if side and value == side then return true end
+    return false
+end
+
+local function creatureIcon(entry, iconIndex, ids)
+    local named = namedIcon(entry[iconIndex])
+    if named then return named end
+    if type(ids) ~= "table" then return "slay" end
+    local side = playerSide()
+    local friendly = false
+    for _, id in ipairs(ids) do
+        local known = friendlyNpc(id, side)
+        if known == false then return "slay" end
+        if known == true then friendly = true end
+    end
+    if friendly then return "talk" end
+    return "slay"
+end
+
+local function questStepIcon(questId, done)
+    local flags = ns.QuestCall(questId, "specialFlags")
+    if type(flags) == "number" and ns.Band(flags, 1) ~= 0 then
+        return done and "repeatable_complete" or "repeatable"
+    end
+    return done and "complete" or "available"
+end
+
+function ns.StepIcon(stop)
+    if type(stop) ~= "table" then return nil end
+    local name = stop.icon
+    if type(name) ~= "string" or not ICON_PATH[name] then
+        if stop.kind == "accept" then name = "available"
+        elseif stop.kind == "turnin" then name = "complete"
+        elseif stop.kind == "objective" then name = "event"
+        else return nil
+        end
+    end
+    local typeId = ICON_TYPE[name]
+    if type(Questie) == "table" and type(Questie.usedIcons) == "table" and typeId then
+        local path = Questie.usedIcons[typeId]
+        if type(path) == "string" and path ~= "" then return path end
+    end
+    if type(Questie) == "table" and type(Questie.icons) == "table" then
+        local path = Questie.icons[name]
+        if type(path) == "string" and path ~= "" then return path end
+    end
+    return ICON_PATH[name]
+end
+
 local function preferZone(questId)
     local zone = ns.QuestNumber(questId, "zoneOrSort")
     if zone and zone > 0 then return zone end
@@ -564,7 +717,7 @@ function ns.CollectStops(questId, spec)
         stop.objectiveDone = line.finished and true or false
     end
 
-    local function pushObjective(text, point, sourceName)
+    local function pushObjective(text, point, sourceName, icon)
         if spec.complete then return end
         local key = norm(text)
         if key ~= "" and seen[key] then return end
@@ -585,6 +738,7 @@ function ns.CollectStops(questId, spec)
             followup = spec.followup,
             afterTurnin = spec.afterTurnin,
             sourceName = sourceName,
+            icon = icon or "event",
             unmatched = line == nil,
         }
         applyProgress(stop, line)
@@ -593,24 +747,26 @@ function ns.CollectStops(questId, spec)
 
     if ns.QuestExists(questId) and not spec.complete then
         local objectives = ns.QuestCall(questId, "objectives") or {}
-        local function creatures(list, textIndex, idIndex)
+        local function creatures(list, textIndex, idIndex, iconIndex)
             if type(list) ~= "table" then return end
             for _, entry in ipairs(list) do
                 if type(entry) == "table" then
                     local ids = entry[idIndex]
                     if type(ids) ~= "table" then ids = { ids } end
                     local point = bestOfIds(NpcDB, ids, player, prefer, 8)
-                    pushObjective(objectiveText(entry, textIndex, point and point.name or "Enemy"), point, point and point.name)
+                    local text = objectiveText(entry, textIndex, point and point.name or "Enemy")
+                    pushObjective(text, point, point and point.name, creatureIcon(entry, iconIndex, ids))
                 end
             end
         end
 
-        creatures(objectives[1], 2, 1)
+        creatures(objectives[1], 2, 1, 3)
         if type(objectives[2]) == "table" then
             for _, entry in ipairs(objectives[2]) do
                 if type(entry) == "table" then
                     local point = bestOfIds(ObjectDB, { entry[1] }, player, prefer, 4)
-                    pushObjective(objectiveText(entry, 2, point and point.name or "Object"), point, point and point.name)
+                    local text = objectiveText(entry, 2, point and point.name or "Object")
+                    pushObjective(text, point, point and point.name, namedIcon(entry[3]) or "object")
                 end
             end
         end
@@ -619,16 +775,18 @@ function ns.CollectStops(questId, spec)
                 if type(entry) == "table" then
                     local point = itemPoint(entry[1], player, prefer)
                     local text = objectiveText(entry, 2, point and point.name or "Item")
-                    pushObjective(text, point, point and point.name)
+                    pushObjective(text, point, point and point.name, itemIcon(entry[3], entry[1]))
                 end
             end
         end
-        creatures(objectives[5], 3, 1)
+        creatures(objectives[5], 3, 1, 4)
         if type(objectives[6]) == "table" then
             for _, entry in ipairs(objectives[6]) do
                 if type(entry) == "table" then
                     local point = itemPoint(entry[3], player, prefer)
-                    pushObjective(objectiveText(entry, 2, "Spell target"), point, point and point.name)
+                    local icon = "interact"
+                    if type(entry[3]) == "number" and entry[3] > 0 then icon = itemIcon(nil, entry[3]) end
+                    pushObjective(objectiveText(entry, 2, "Spell target"), point, point and point.name, icon)
                 end
             end
         end
@@ -636,7 +794,7 @@ function ns.CollectStops(questId, spec)
         local trigger = ns.QuestCall(questId, "triggerEnd")
         if type(trigger) == "table" then
             local text = type(trigger[1]) == "string" and trigger[1] ~= "" and trigger[1] or "Enter the area"
-            pushObjective(text, bestPoint(trigger[2], player, prefer))
+            pushObjective(text, bestPoint(trigger[2], player, prefer), nil, "event")
         end
 
         local extra = ns.QuestCall(questId, "extraObjectives")
@@ -648,7 +806,9 @@ function ns.CollectStops(questId, spec)
                 if type(entry) == "table" then
                     local text = type(entry[3]) == "string" and entry[3] ~= "" and entry[3] or nil
                     local point = bestPoint(entry[1], player, prefer)
-                    if text or point then pushObjective(text or "Extra objective", point) end
+                    if text or point then
+                        pushObjective(text or "Extra objective", point, nil, namedIcon(entry[2]) or "event")
+                    end
                 end
             end
         end
@@ -698,6 +858,7 @@ function ns.CollectStops(questId, spec)
                     areaId = 0,
                     followup = spec.followup,
                     afterTurnin = spec.afterTurnin,
+                    icon = "event",
                 }
                 applyProgress(stop, line)
                 addStop(stops, stop)
@@ -727,6 +888,7 @@ function ns.CollectStops(questId, spec)
         followup = spec.followup,
         afterTurnin = spec.afterTurnin,
         afterAccept = spec.followup and questId or nil,
+        icon = questStepIcon(questId, true),
     })
 
     -- Accepting the follow-up is its own step, at that quest's giver.
@@ -761,6 +923,7 @@ function ns.CollectStops(questId, spec)
             afterTurnin = spec.afterTurnin,
             acceptId = questId,
             acceptName = questName,
+            icon = questStepIcon(questId, false),
         }
         table.insert(stops, 1, accept)
         for index = 2, #stops do
@@ -987,5 +1150,6 @@ function ns.RouteStop(stop)
         acceptId = stop.acceptId,
         acceptName = stop.acceptName,
         sourceName = giver.name,
+        icon = stop.icon,
     }
 end
