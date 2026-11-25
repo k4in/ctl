@@ -130,11 +130,15 @@ local function primaryArea(stops)
     return nil
 end
 
-local function attachFollowup(turnin, followStops, nextName)
+local function attachFollowup(turnin, followStops, nextName, nextId)
     if not turnin then return end
     local areaId = primaryArea(followStops)
     turnin.nextArea = areaId
     turnin.nextName = nextName
+    if type(nextId) == "number" and nextId > 0 then
+        turnin.acceptId = nextId
+        turnin.acceptName = nextName
+    end
     if not nextName then return end
     if areaId then
         turnin.note = "Next: " .. nextName .. " in " .. ns.ZoneName(areaId)
@@ -376,7 +380,7 @@ function ns.BuildPlan(rows, player)
                             afterTurnin = previousId,
                         })
                         if not ok or type(followStops) ~= "table" then break end
-                        attachFollowup(previousTurnin, followStops, followName)
+                        attachFollowup(previousTurnin, followStops, followName, nextId)
                         countObjectives(followStops, objCount)
                         local followTurnin
                         for _, stop in ipairs(followStops) do
@@ -389,6 +393,52 @@ function ns.BuildPlan(rows, player)
                         if nextId == cutoff then break end
                     end
                 end
+            end
+        end
+    end
+
+    -- A turned-in quest leaves the log before its follow-up is accepted. Those
+    -- quests stay reserved so a rebuild in that gap does not drop them.
+    local handoff = ns.CharDB().handoff
+    if dbReady and type(handoff) == "table" then
+        local pending = {}
+        for acceptId in pairs(handoff) do
+            if type(acceptId) == "number" and not inLog[acceptId] and not addedFollow[acceptId] then
+                pending[#pending + 1] = acceptId
+            end
+        end
+        table.sort(pending, function(a, b)
+            local left = ns.ChainInfo and ns.ChainInfo(a)
+            local right = ns.ChainInfo and ns.ChainInfo(b)
+            local leftAt = left and left.index or a
+            local rightAt = right and right.index or b
+            if leftAt ~= rightAt then return leftAt < rightAt end
+            return a < b
+        end)
+        local previousId, previousTurnin
+        for _, acceptId in ipairs(pending) do
+            addedFollow[acceptId] = true
+            local followName = ns.QuestName(acceptId) or ("Quest " .. acceptId)
+            local ok, followStops = pcall(ns.CollectStops, acceptId, {
+                player = player,
+                questName = followName,
+                lines = {},
+                followup = true,
+                afterTurnin = previousId,
+            })
+            if ok and type(followStops) == "table" then
+                if previousTurnin then
+                    attachFollowup(previousTurnin, followStops, followName, acceptId)
+                end
+                countObjectives(followStops, objCount)
+                local followTurnin
+                for _, stop in ipairs(followStops) do
+                    stop.note = stop.note or "not in the log yet"
+                    stops[#stops + 1] = stop
+                    if stop.kind == "turnin" then followTurnin = stop end
+                end
+                previousId = acceptId
+                previousTurnin = followTurnin
             end
         end
     end

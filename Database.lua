@@ -430,7 +430,7 @@ end
 
 -- Updates the live counter on a step that is still in the plan. A finished
 -- leading step is how the window advances; the step list itself stays put.
-function ns.SyncStop(stop, row)
+function ns.SyncStop(stop, row, inLog)
     if type(stop) ~= "table" then return false end
     local present = type(row) == "table"
     if present and stop.followup then
@@ -438,7 +438,17 @@ function ns.SyncStop(stop, row)
         if stop.note == "not in the log yet" then stop.note = nil end
     end
     if stop.kind == "turnin" then
+        stop.awaitAccept = nil
         if present or stop.followup then return false end
+        local acceptId = stop.acceptId
+        if type(acceptId) == "number" and acceptId > 0 then
+            local taken = false
+            if type(inLog) == "table" and inLog[acceptId] then taken = true end
+            if not taken then
+                stop.awaitAccept = true
+                return false
+            end
+        end
         return true
     end
     if not present then

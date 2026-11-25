@@ -223,8 +223,8 @@ local function clip(line)
     if line.SetMaxLines then line:SetMaxLines(1) end
 end
 
-local options = chrome("ClearTheLogOptions", 480, 380, "posOptions", -260, 40, nil, {
-    minW = 440, minH = 340, sizeKey = "sizeOptions",
+local options = chrome("ClearTheLogOptions", 480, 460, "posOptions", -260, 40, nil, {
+    minW = 440, minH = 420, sizeKey = "sizeOptions",
 })
 options.title:SetText(ns.TITLE)
 options.subtitle:SetText("/ctl")
@@ -325,6 +325,11 @@ end
 section(options, "New quests", -226)
 
 addToggle("Add new quests to the guide", -250, "autoTrack", "Add automatically", "A quest you accept is added to the guide. A follow-up that is already a step stays where it is.")
+
+section(options, "Quest dialogs", -290)
+
+addToggle("Turn in completed quests", -314, "autoTurnIn", "Turn in automatically", "Turns in every completed quest when you talk to someone. A reward choice waits for you. An item quest in the guide is confirmed too.")
+addToggle("Accept planned quests", -340, "autoAcceptQuest", "Accept automatically", "Accepts a quest only when it is already a step in the guide.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -750,6 +755,9 @@ local function currentDetails(stop)
         if giverText then add("Quest giver: " .. giverText, 0.75, 0.9, 1) end
         if turninText then add("Turn in: " .. turninText, 0.7, 1, 0.75) end
     end
+    if type(stop.acceptName) == "string" and stop.acceptName ~= "" and not stop.awaitAccept then
+        add("Accept: " .. stop.acceptName, 0.75, 0.9, 1)
+    end
     local meta = {}
     if stop.questName and stop.questName ~= "" then meta[#meta + 1] = stop.questName end
     if stop.note and stop.note ~= "" then meta[#meta + 1] = stop.note end
@@ -824,9 +832,15 @@ local function fillSteps(steps)
         elseif here then
             anchorLine(row, -28, inset, true)
             local tag = stop.kind == "turnin" and "Turn in" or "Objective"
-            if stop.followup then tag = tag .. " · Follow-up" end
+            local label = stop.text or ""
+            if stop.awaitAccept and type(stop.acceptName) == "string" and stop.acceptName ~= "" then
+                tag = "Accept"
+                label = stop.acceptName
+            elseif stop.followup then
+                tag = tag .. " · Follow-up"
+            end
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
-            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
+            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
             row.line:SetTextColor(1, 0.86, 0.35)
             height = showCurrent(row, currentDetails(stop), inset)
         else
@@ -933,19 +947,25 @@ local guideHideToken = 0
 
 local function rememberGuideOpen()
     guideHideToken = guideHideToken + 1
-    ns.guideIntent = true
-    if ns.ready then ns.CharDB().guideShown = true end
+    if ns.NoteGuideShown then
+        ns.NoteGuideShown()
+    else
+        ns.guideIntent = true
+        if ns.ready then ns.CharDB().guideShown = true end
+    end
 end
 
 local function scheduleGuideClosed()
-    -- Apply on the next frame so the logout hide can be ignored.
+    -- A loading screen hides the frame too. Only a hide while the world is up counts.
     guideHideToken = guideHideToken + 1
     local token = guideHideToken
+    local ignore = ns.loggingOut or ns.worldHidden or not ns.worldReady
     local function apply()
-        if token ~= guideHideToken or ns.loggingOut then return end
+        if token ~= guideHideToken or ignore or ns.loggingOut or ns.worldHidden or not ns.worldReady then
+            return
+        end
         if guide:IsShown() then return end
-        ns.guideIntent = false
-        if ns.ready then ns.CharDB().guideShown = false end
+        if ns.NoteGuideHidden then ns.NoteGuideHidden() end
     end
     if C_Timer and C_Timer.After then
         C_Timer.After(0, apply)

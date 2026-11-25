@@ -2,7 +2,7 @@
 ## Title: Clear the Log
 ## Notes: Plans a short route for the quests in your log
 ## Author: ClearTheLog
-## Version: 0.3.11
+## Version: 0.3.12
 ## Category: Quests
 ## Dependencies: QuestieDB
 ## OptionalDeps: TomTom, ShortestPathForever
@@ -14,4 +14,5 @@ Database.lua
 Chains.lua
 Planner.lua
 Router.lua
+Auto.lua
 UI.lua

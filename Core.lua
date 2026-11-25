@@ -86,6 +86,7 @@ function ns.CharDB()
     if type(db.chainOff) ~= "table" then db.chainOff = {} end
     if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
     if type(db.skipped) ~= "table" then db.skipped = {} end
+    if type(db.handoff) ~= "table" then db.handoff = {} end
     if db.legacyMode == nil and not db.migrated and (db.mode == "ignore" or db.mode == "select") then
         db.legacyMode = db.mode
     end
@@ -99,6 +100,8 @@ function ns.CharDB()
     if db.refreshTurnin == nil then db.refreshTurnin = true end
     if db.refreshObjective == nil then db.refreshObjective = true end
     if db.autoTrack == nil then db.autoTrack = true end
+    if db.autoTurnIn ~= true then db.autoTurnIn = false end
+    if db.autoAcceptQuest ~= true then db.autoAcceptQuest = false end
     db.autoChain = nil
     return db
 end
@@ -427,6 +430,18 @@ function ns.RestoreGuide()
     if type(ns.ShowGuide) == "function" then ns.ShowGuide() end
 end
 
+function ns.NoteGuideShown()
+    ns.guideIntent = true
+    if ns.ready then ns.CharDB().guideShown = true end
+end
+
+-- Loading screens and logout hide the frame without the player closing it.
+function ns.NoteGuideHidden()
+    if ns.loggingOut or ns.worldHidden or not ns.worldReady then return end
+    ns.guideIntent = false
+    if ns.ready then ns.CharDB().guideShown = false end
+end
+
 function ns.SaveGuideState()
     ns.loggingOut = true
     if not ns.ready then return end
@@ -570,7 +585,7 @@ local function catchUp(plan, rows)
     local steps = plan and plan.steps or {}
     local byId = rowsById(rows)
     for index = 1, #steps do
-        ns.SyncStop(steps[index], byId[steps[index].questId])
+        ns.SyncStop(steps[index], byId[steps[index].questId], byId)
     end
     local start = ns.windowStart or 1
     if type(start) ~= "number" or start < 1 then start = 1 end
@@ -578,11 +593,93 @@ local function catchUp(plan, rows)
     while start <= #steps do
         local stop = steps[start]
         if stop.skipped then break end
-        if not ns.SyncStop(stop, byId[stop.questId]) then break end
+        if not ns.SyncStop(stop, byId[stop.questId], byId) then break end
         start = start + 1
     end
     ns.windowStart = start
     return start ~= before
+end
+
+local function handoffParent(questId)
+    local handoff = ns.CharDB().handoff
+    if type(handoff) ~= "table" or type(questId) ~= "number" then return false end
+    for _, fromId in pairs(handoff) do
+        if fromId == questId then return true end
+    end
+    return false
+end
+
+-- Drop the quest that was reserved from this one, and anything reserved from that.
+local function dropHandoffFrom(questId)
+    local handoff = ns.CharDB().handoff
+    if type(handoff) ~= "table" then return end
+    local queue = { questId }
+    local index = 1
+    while queue[index] do
+        local id = queue[index]
+        index = index + 1
+        local children = {}
+        for acceptId, fromId in pairs(handoff) do
+            if fromId == id then children[#children + 1] = acceptId end
+        end
+        for _, acceptId in ipairs(children) do
+            handoff[acceptId] = nil
+            queue[#queue + 1] = acceptId
+        end
+    end
+end
+
+-- A removed quest that still owes a planned follow-up is a turn-in, not an abandon.
+local function classifyRemovals(reasons)
+    local removed = ns.removedIds
+    ns.removedIds = nil
+    if type(removed) ~= "table" then return end
+    local steps = ns.lastPlan and ns.lastPlan.steps
+    local current = steps and steps[ns.windowStart or 1]
+    local abandon = false
+    local handoffTurnin = false
+    for questId in pairs(removed) do
+        local prev = snapshot[questId]
+        local ready = prev and prev.complete
+        local onTurnin = current and current.kind == "turnin" and current.questId == questId and current.acceptId
+        if handoffParent(questId) and (reasons.turnin or ready or onTurnin) then
+            handoffTurnin = true
+        else
+            abandon = true
+            dropHandoffFrom(questId)
+        end
+    end
+    if reasons.removed and not reasons.turnin then
+        if abandon then reasons.abandon = true end
+        if handoffTurnin and not abandon then reasons.turnin = true end
+    end
+end
+
+local function rememberHandoffs(plan, rows)
+    local db = ns.CharDB()
+    local live = {}
+    for _, row in ipairs(rows or {}) do
+        if type(row.id) == "number" then live[row.id] = true end
+    end
+    local found = {}
+    for _, stop in ipairs(plan and plan.steps or {}) do
+        if stop.kind == "turnin" and type(stop.acceptId) == "number" and not live[stop.acceptId] then
+            found[stop.acceptId] = stop.questId
+        end
+    end
+    local previous = db.handoff
+    local handoff = {}
+    for acceptId, fromId in pairs(found) do
+        handoff[acceptId] = fromId
+    end
+    if type(previous) == "table" then
+        for acceptId, fromId in pairs(previous) do
+            if not live[acceptId] and not live[fromId] and not handoff[acceptId] then
+                handoff[acceptId] = fromId
+            end
+        end
+    end
+    db.handoff = handoff
 end
 
 -- Login, the refresh button, shift-click, membership edits, an abandoned quest,
@@ -648,8 +745,9 @@ function ns.Refresh(reasons)
 
     pruneSaved(rows)
     for _, row in ipairs(rows) do ns.DecideQuest(row.id) end
+    classifyRemovals(reasons)
     if takeSnapshot(rows) then reasons.objective = true end
-    if reasons.removed and not reasons.turnin then reasons.abandon = true end
+    if reasons.removed and not reasons.turnin and not reasons.abandon then reasons.abandon = true end
     eachAccepted(accepts, function(questId)
         if questInPlan(ns.lastPlan, questId) then keepPlannedChain(questId, ns.lastPlan) end
     end)
@@ -673,6 +771,7 @@ function ns.Refresh(reasons)
             ns.PromoteStep(plan.steps, origin.key)
         end
         pruneSkips(rows, plan)
+        rememberHandoffs(plan, rows)
         ns.lastPlan, ns.lastErr = plan, err
         ns.windowStart = 1
         if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
@@ -685,6 +784,7 @@ function ns.Refresh(reasons)
 
     local plan = ns.lastPlan
     if ns.QuestView then plan.quests = ns.QuestView(rows) end
+    rememberHandoffs(plan, rows)
     ns.lastErr = err
     if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then
         ns.windowStart = routeFrom
@@ -724,6 +824,22 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         ns.OpenDatabase()
         ns.RestoreGuide()
         ns.RequestRefresh("login")
+    elseif event == "PLAYER_LEAVING_WORLD" then
+        ns.worldHidden = true
+        ns.worldReady = false
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        ns.worldHidden = false
+        ns.RestoreGuide()
+        local function settle()
+            ns.worldHidden = false
+            ns.worldReady = true
+            ns.RestoreGuide()
+        end
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, settle)
+        else
+            settle()
+        end
     elseif event == "PLAYER_LOGOUT" then
         ns.SaveGuideState()
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -736,6 +852,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "QUEST_TURNED_IN" then
         ns.RequestRefresh("turnin")
     elseif event == "QUEST_REMOVED" then
+        local removedId = eventQuestId(arg1, arg2)
+        if type(removedId) == "number" then
+            ns.removedIds = ns.removedIds or {}
+            ns.removedIds[removedId] = true
+        end
         ns.RequestRefresh("removed")
     elseif event == "QUEST_LOG_UPDATE" then
         ns.RequestRefresh("log")
@@ -746,6 +867,8 @@ end)
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_LOGOUT")
+eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
