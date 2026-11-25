@@ -461,25 +461,10 @@ function ns.SkipStep(index)
     local steps = plan and plan.steps
     local stop = steps and steps[index]
     if not stop or stop.skipped or not ns.StepKey then return end
-    if combatLocked() then
-        ns.CharDB().skipped[ns.StepKey(stop)] = true
-        ns.pendingSkip = index
-        ns.routeFrom = nil
-        ns.RequestRefresh("skip")
-        return
-    end
     ns.CharDB().skipped[ns.StepKey(stop)] = true
-    table.remove(steps, index)
-    stop.skipped = true
-    steps[#steps + 1] = stop
-    local start = ns.windowStart or 1
-    if type(start) ~= "number" or start < 1 then start = 1 end
-    if start > index then start = start - 1 end
-    if #steps > 0 and start > #steps then start = #steps end
-    ns.windowStart = start
     ns.routeFrom = nil
-    if ns.PushRoute then ns.PushRoute(plan, start, { skip = true }) end
-    if ns.Render then ns.Render(plan, ns.lastErr) end
+    ns.routeOrigin = nil
+    ns.RequestRefresh("skip")
 end
 
 function ns.UndoSkip(index)
@@ -489,6 +474,7 @@ function ns.UndoSkip(index)
     if not stop or not ns.StepKey then return end
     ns.CharDB().skipped[ns.StepKey(stop)] = nil
     ns.routeFrom = nil
+    ns.routeOrigin = nil
     ns.RequestRefresh("plan")
 end
 
@@ -643,24 +629,6 @@ local function rowsById(rows)
         if type(row.id) == "number" then byId[row.id] = row end
     end
     return byId
-end
-
-local function applyPendingSkip(plan)
-    local index = ns.pendingSkip
-    ns.pendingSkip = nil
-    local steps = plan and plan.steps
-    if type(index) ~= "number" or type(steps) ~= "table" or not ns.StepKey then return end
-    local stop = steps[index]
-    if not stop or not ns.CharDB().skipped[ns.StepKey(stop)] then return end
-    stop.skipped = true
-    table.remove(steps, index)
-    steps[#steps + 1] = stop
-    local start = ns.windowStart or 1
-    if type(start) ~= "number" or start < 1 then start = 1 end
-    if start > index then start = start - 1 end
-    if #steps > 0 and start > #steps then start = #steps end
-    if start < 1 then start = 1 end
-    ns.windowStart = start
 end
 
 -- A follow-up stays reserved only while it is still ahead and still wanted.
@@ -821,18 +789,21 @@ local function rememberHandoffs(plan, rows)
     db.handoff = handoff
 end
 
--- Login, the refresh button, shift-click, membership edits, an abandoned quest,
--- and a brand-new auto-added quest build a new order. A follow-up that is
--- already a step never does, and neither does finishing a step.
+-- Login, refresh, shift-click, skip, undo skip, membership edits, and an
+-- abandoned quest build a new order. So does accepting a quest that is not
+-- already a step, when auto-add is on and that quest is included.
+-- Finishing a step never does. A quest the player already left out stays out.
 local function needsRebuild(reasons, accepts, rows)
-    if reasons.login or reasons.plan or reasons.manual or reasons.abandon then
+    if reasons.login or reasons.plan or reasons.manual or reasons.abandon or reasons.skip then
         return true
     end
     if reasons.accept and ns.CharDB().autoTrack == true then
         local live = rowsById(rows)
         local rebuild = false
         eachAccepted(accepts, function(questId)
-            if live[questId] and not questInPlan(ns.lastPlan, questId) then rebuild = true end
+            if live[questId] and ns.IsIncluded(questId) and not questInPlan(ns.lastPlan, questId) then
+                rebuild = true
+            end
         end)
         if rebuild then return true end
     end
@@ -893,7 +864,6 @@ function ns.Refresh(reasons)
 
     local rebuild = needsRebuild(reasons, accepts, rows)
     if rebuild then
-        ns.pendingSkip = nil
         reasons.rebuild = true
         local player = ns.PlayerLocation()
         if reasons.plan and type(origin) == "table" and type(origin.areaId) == "number" and origin.areaId > 0 then
@@ -938,8 +908,11 @@ function ns.Refresh(reasons)
     if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then
         ns.windowStart = routeFrom
     end
-    if reasons.skip then applyPendingSkip(plan) end
-    if ns.DropFinishedSteps and ns.DropFinishedSteps(plan, rows) then reasons.advance = true end
+    if ns.DropFinishedSteps and ns.DropFinishedSteps(plan, rows) then
+        reasons.advance = true
+        -- A sort still in flight would replace the order. Finishing a step must not.
+        if ns.CancelTour then ns.CancelTour() end
+    end
     if ns.QuestView then
         plan.quests = ns.QuestView(rows)
         if ns.WithPendingQuests then

@@ -729,6 +729,12 @@ local function estimateApi()
     return api
 end
 
+function ns.CancelTour()
+    if not ns.tourPending then return end
+    ns.tourEpoch = (ns.tourEpoch or 0) + 1
+    ns.tourPending = false
+end
+
 function ns.ApplyTour(plan, ordered, epoch)
     if epoch ~= ns.tourEpoch or ns.lastPlan ~= plan or type(ordered) ~= "table" then return end
     local live = {}
@@ -805,11 +811,16 @@ function ns.ScheduleTour(plan, player, pinKey)
         if epoch ~= ns.tourEpoch then return end
         if not ok then
             ns.tourPending = false
+            if ns.Render then ns.Render(plan, ns.lastErr) end
             return
         end
         if coroutine.status(worker) == "dead" then
             ns.tourPending = false
-            if type(tag) == "table" then ns.ApplyTour(plan, tag, epoch) end
+            if type(tag) == "table" then
+                ns.ApplyTour(plan, tag, epoch)
+            elseif ns.Render then
+                ns.Render(plan, ns.lastErr)
+            end
             return
         end
         if tag ~= "need" then

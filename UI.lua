@@ -93,7 +93,11 @@ local function chrome(name, width, height, posKey, defaultX, defaultY, rightInse
         if frame.SetMinResize then frame:SetMinResize(minW, minH) end
         if frame.SetMaxResize then frame:SetMaxResize(maxW, maxH) end
     end
-    tinsert(UISpecialFrames, name)
+    -- UISpecialFrames consumes the first Esc, so the game menu never opens.
+    -- The guide stays up. Options and the quest list still close on Esc.
+    if limits.escape ~= false then
+        tinsert(UISpecialFrames, name)
+    end
 
     local titleBar = CreateFrame("Frame", nil, frame)
     titleBar:SetPoint("TOPLEFT", 12, -8)
@@ -311,7 +315,7 @@ options.onPresent = function()
 end
 
 local guide = chrome("ClearTheLogGuide", 440, 580, "pos", 180, 0, 220, {
-    minW = 380, minH = 320, sizeKey = "sizeGuide",
+    minW = 380, minH = 320, sizeKey = "sizeGuide", escape = false,
 })
 guide.title:SetText("Guide")
 guide.subtitle:SetText("/ctl route")
@@ -347,10 +351,23 @@ bindTip(optionsButton, "Options", "Opens the options. Same command: /ctl.")
 
 local refreshButton = redIconButton(guide, "Interface\\Buttons\\UI-RefreshButton")
 refreshButton:SetPoint("RIGHT", optionsButton, "LEFT", -6, 0)
+if refreshButton.SetMotionScriptsWhileDisabled then refreshButton:SetMotionScriptsWhileDisabled(true) end
 refreshButton:SetScript("OnClick", function()
+    if ns.tourPending then return end
     if ns.RefreshPlan then ns.RefreshPlan() end
 end)
-bindTip(refreshButton, "Recalculate plan", "Rebuilds the steps from your current location. Waypoints update while navigation is on.")
+refreshButton:SetScript("OnEnter", function()
+    GameTooltip:SetOwner(refreshButton, "ANCHOR_RIGHT")
+    if ns.tourPending then
+        GameTooltip:SetText("Calculating the route", 1, 0.82, 0)
+        GameTooltip:AddLine("Refresh is available when the route is ready.", 1, 1, 1, true)
+    else
+        GameTooltip:SetText("Recalculate plan", 1, 0.82, 0)
+        GameTooltip:AddLine("Rebuilds the steps from your current location. Waypoints update while navigation is on.", 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+end)
+refreshButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 local navButton = redIconButton(guide, "Interface\\Minimap\\Tracking\\Target", "Interface\\Icons\\Ability_Hunter_SniperShot")
 navButton:SetPoint("RIGHT", refreshButton, "LEFT", -6, 0)
@@ -389,6 +406,56 @@ guide.subtitle:SetPoint("RIGHT", navButton, "LEFT", -8, 0)
 
 local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 68)
 local stepRows = {}
+
+local calcBar = CreateFrame("Frame", nil, guide)
+calcBar:SetHeight(22)
+calcBar:SetPoint("TOPLEFT", 16, -46)
+calcBar:SetPoint("TOPRIGHT", -34, -46)
+calcBar:Hide()
+local calcBack = calcBar:CreateTexture(nil, "BACKGROUND")
+calcBack:SetAllPoints()
+calcBack:SetColorTexture(0.1, 0.11, 0.14, 0.95)
+local calcSpin = calcBar:CreateTexture(nil, "ARTWORK")
+calcSpin:SetSize(16, 16)
+calcSpin:SetPoint("LEFT", 4, 0)
+calcSpin:SetTexture("Interface\\Common\\StreamCircle")
+if not calcSpin:GetTexture() then
+    calcSpin:SetTexture("Interface\\Buttons\\UI-RefreshButton")
+end
+calcSpin:SetVertexColor(1, 0.82, 0)
+local calcLabel = calcBar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+calcLabel:SetPoint("LEFT", calcSpin, "RIGHT", 6, 0)
+calcLabel:SetPoint("RIGHT", calcBar, "RIGHT", -6, 0)
+calcLabel:SetJustifyH("LEFT")
+calcLabel:SetText("Calculating the route…")
+local calcAngle = 0
+calcBar:SetScript("OnUpdate", function(_, elapsed)
+    if not calcSpin.SetRotation then return end
+    calcAngle = (calcAngle + (elapsed or 0) * 4) % (math.pi * 2)
+    calcSpin:SetRotation(calcAngle)
+end)
+
+local function placeStepList(busy)
+    stepScroll:ClearAllPoints()
+    stepScroll:SetPoint("TOPLEFT", 16, busy and -72 or -48)
+    stepScroll:SetPoint("BOTTOMRIGHT", -34, 68)
+end
+
+local function paintCalculating()
+    local busy = ns.tourPending and true or false
+    if busy then calcBar:Show() else calcBar:Hide() end
+    placeStepList(busy)
+    local icon = refreshButton.icon
+    if busy then
+        refreshButton:Disable()
+        if icon and icon.SetDesaturated then icon:SetDesaturated(true) end
+        if icon then icon:SetVertexColor(0.55, 0.55, 0.55) end
+    else
+        refreshButton:Enable()
+        if icon and icon.SetDesaturated then icon:SetDesaturated(false) end
+        if icon then icon:SetVertexColor(1, 1, 1) end
+    end
+end
 
 local summary = guide:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 summary:SetPoint("BOTTOMLEFT", 24, 50)
@@ -954,6 +1021,7 @@ end
 
 function ns.RenderGuide(plan, err)
     if ns.PaintNavigation then ns.PaintNavigation() end
+    paintCalculating()
     silent = true
     if not plan then
         fillSteps(nil)
@@ -968,12 +1036,10 @@ function ns.RenderGuide(plan, err)
     for _, quest in ipairs(plan.quests or {}) do
         if quest.included then included = included + 1 end
     end
-    local summaryText = string.format(
+    summary:SetText(string.format(
         "%d of %d steps · %d of %d quests in the guide",
         shown, #(plan.steps or {}), included, #(plan.quests or {})
-    )
-    if ns.tourPending then summaryText = summaryText .. "  ·  Sorting route…" end
-    summary:SetText(summaryText)
+    ))
     local text, bad = routeSentence()
     routeLine:SetText(text or "")
     if bad then
