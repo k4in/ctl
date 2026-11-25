@@ -155,10 +155,11 @@ end
 
 local function orderStops(stops, objCount, player)
     player = player or {}
-    local emittedObj, emittedTurnin = {}, {}
+    local emittedObj, emittedTurnin, emittedAccept = {}, {}, {}
 
     local function ready(stop)
         if stop.afterTurnin and not emittedTurnin[stop.afterTurnin] then return false end
+        if stop.afterAccept and not emittedAccept[stop.afterAccept] then return false end
         if stop.kind == "turnin" then
             return (emittedObj[stop.questId] or 0) >= (objCount[stop.questId] or 0)
         end
@@ -169,6 +170,8 @@ local function orderStops(stops, objCount, player)
         stop.used = true
         if stop.kind == "objective" then
             emittedObj[stop.questId] = (emittedObj[stop.questId] or 0) + 1
+        elseif stop.kind == "accept" then
+            emittedAccept[stop.questId] = true
         else
             emittedTurnin[stop.questId] = true
         end

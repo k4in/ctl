@@ -352,6 +352,34 @@ local function bestPoint(spawns, player, preferArea)
     return best
 end
 
+-- A moving quest giver has no static spawn. Questie then pins the first waypoint.
+local function bestWaypoint(db, ids, player, preferArea)
+    if type(ids) ~= "table" or type(db) ~= "table" or type(db.waypoints) ~= "function" then return nil end
+    local best
+    for _, id in ipairs(ids) do
+        if type(id) == "number" and id > 0 then
+            local ok, routes = pcall(db.waypoints, id)
+            if ok and type(routes) == "table" then
+                for areaId, paths in pairs(routes) do
+                    if type(areaId) == "number" and type(paths) == "table" then
+                        local path = paths[1]
+                        local row = path
+                        if type(path) == "table" and type(path[1]) == "table" then row = path[1] end
+                        if type(row) == "table" then
+                            local point = considerPoint(nil, areaId, row[1], row[2], player, preferArea)
+                            if point and (not best or point.score < best.score) then
+                                point.name = entityName(db, id)
+                                best = point
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
 local function bestOfIds(db, ids, player, preferArea, limit)
     local best
     if type(ids) ~= "table" then return nil end
@@ -437,18 +465,13 @@ function ns.SyncStop(stop, row, inLog)
         stop.followup = nil
         if stop.note == "not in the log yet" then stop.note = nil end
     end
+    if stop.kind == "accept" then
+        local questId = stop.questId
+        return type(inLog) == "table" and type(questId) == "number" and inLog[questId] ~= nil
+    end
     if stop.kind == "turnin" then
         stop.awaitAccept = nil
         if present or stop.followup then return false end
-        local acceptId = stop.acceptId
-        if type(acceptId) == "number" and acceptId > 0 then
-            local taken = false
-            if type(inLog) == "table" and inLog[acceptId] then taken = true end
-            if not taken then
-                stop.awaitAccept = true
-                return false
-            end
-        end
         return true
     end
     if not present then
@@ -703,7 +726,47 @@ function ns.CollectStops(questId, spec)
         y = point and point.y,
         followup = spec.followup,
         afterTurnin = spec.afterTurnin,
+        afterAccept = spec.followup and questId or nil,
     })
+
+    -- Accepting the follow-up is its own step, at that quest's giver.
+    if spec.followup then
+        local giver = select(1, ns.QuestContacts(questId, player))
+        if type(giver) ~= "table" or type(giver.x) ~= "number" or type(giver.y) ~= "number" then
+            local started = ns.QuestCall(questId, "startedBy") or {}
+            local function asIds(value)
+                if type(value) == "number" and value > 0 then return { value } end
+                if type(value) ~= "table" then return nil end
+                return value
+            end
+            local walked = bestWaypoint(NpcDB, asIds(started[1]), player, prefer)
+            if not walked then walked = bestWaypoint(ObjectDB, asIds(started[2]), player, prefer) end
+            if walked then
+                if type(giver) == "table" and type(giver.name) == "string" and not walked.name then
+                    walked.name = giver.name
+                end
+                giver = walked
+            end
+        end
+        local accept = {
+            questId = questId,
+            questName = questName,
+            kind = "accept",
+            text = questName,
+            areaId = giver and giver.areaId or 0,
+            x = giver and giver.x,
+            y = giver and giver.y,
+            sourceName = giver and giver.name,
+            followup = true,
+            afterTurnin = spec.afterTurnin,
+            acceptId = questId,
+            acceptName = questName,
+        }
+        table.insert(stops, 1, accept)
+        for index = 2, #stops do
+            stops[index].afterAccept = questId
+        end
+    end
 
     return stops
 end
@@ -885,18 +948,12 @@ function ns.QuestContacts(questId, player)
         bestContact(finished[1], finished[2], finished[3], player, prefer)
 end
 
--- The follow-up is accepted from its own Questie giver, which may not be the
--- NPC who took the previous quest.
+-- Used only when an accept step was stored without a map point.
 function ns.AcceptTarget(stop)
-    if type(stop) ~= "table" then return nil end
-    local questId
-    if stop.awaitAccept and type(stop.acceptId) == "number" and stop.acceptId > 0 then
-        questId = stop.acceptId
-    elseif stop.followup and type(stop.questId) == "number" and stop.questId > 0 then
-        questId = stop.questId
-    else
-        return nil
-    end
+    if type(stop) ~= "table" or stop.kind ~= "accept" then return nil end
+    if ns.HasMapPoint(stop) then return nil end
+    local questId = stop.questId
+    if type(questId) ~= "number" or questId <= 0 then return nil end
     local player
     if type(ns.PlayerLocation) == "function" then
         local ok, value = pcall(ns.PlayerLocation)

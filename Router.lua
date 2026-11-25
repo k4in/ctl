@@ -47,7 +47,7 @@ function ns.ShouldPushRoute(reasons)
 end
 
 local function stopTitle(stop)
-    if stop.kind == "turnin" or stop.awaitAccept or stop.followup then
+    if stop.kind == "turnin" or stop.kind == "accept" or stop.awaitAccept or stop.followup then
         if type(stop.questName) == "string" and stop.questName ~= "" then return stop.questName end
     end
     if stop.questName and stop.text and stop.questName ~= stop.text then

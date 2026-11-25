@@ -783,12 +783,12 @@ local function questTitle(stop)
 end
 
 local function waitingToAccept(stop)
-    return stop.awaitAccept or stop.followup
+    return stop.kind == "accept"
 end
 
 -- Turn-in and accept steps name the quest. Objectives keep their own text.
 local function stepCaption(stop, current)
-    if current and waitingToAccept(stop) then
+    if stop.kind == "accept" then
         local name = stop.acceptName
         if type(name) ~= "string" or name == "" then name = questTitle(stop) end
         return "Accept", name

@@ -706,6 +706,11 @@ local function rememberHandoffs(plan, rows)
     for _, stop in ipairs(plan and plan.steps or {}) do
         if stop.kind == "turnin" and type(stop.acceptId) == "number" and not live[stop.acceptId] then
             found[stop.acceptId] = stop.questId
+        elseif stop.kind == "accept" and type(stop.questId) == "number" and not live[stop.questId]
+            and not found[stop.questId] then
+            local fromId = stop.afterTurnin
+            if type(fromId) ~= "number" or fromId <= 0 then fromId = stop.questId end
+            found[stop.questId] = fromId
         end
     end
     local previous = db.handoff
