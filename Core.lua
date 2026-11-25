@@ -152,6 +152,47 @@ function ns.SetIncluded(questId, included)
     db.decided[questId] = true
 end
 
+-- Drops a chain that is only waiting to be accepted, from the guide and the list.
+function ns.DropQuestLine(questId)
+    if not ns.ready or type(questId) ~= "number" or questId <= 0 then return end
+    local db = ns.CharDB()
+    local ids = {}
+    local function add(id)
+        if type(id) == "number" and id > 0 then ids[id] = true end
+    end
+    add(questId)
+    if type(ns.ChainInfo) == "function" then
+        local chain = ns.ChainInfo(questId)
+        if chain and type(chain.ids) == "table" then
+            for _, id in ipairs(chain.ids) do add(id) end
+        end
+    end
+    if type(db.handoff) == "table" then
+        for acceptId, fromId in pairs(db.handoff) do
+            if ids[acceptId] or ids[fromId] then
+                add(acceptId)
+                db.handoff[acceptId] = nil
+            end
+        end
+    end
+    for id in pairs(ids) do
+        db.tracked[id] = false
+        db.decided[id] = true
+        if type(db.chain) == "table" then db.chain[id] = nil end
+        if type(db.chainThrough) == "table" then db.chainThrough[id] = nil end
+        if type(db.chainOff) == "table" then db.chainOff[id] = nil end
+    end
+    if type(db.skipped) == "table" then
+        for key in pairs(db.skipped) do
+            local id = tonumber(tostring(key):match("^(%d+)"))
+            if ids[id] then db.skipped[key] = nil end
+        end
+    end
+    ns.routeFrom = nil
+    ns.routeOrigin = nil
+    if ns.RequestRefresh then ns.RequestRefresh("manual") end
+end
+
 function ns.SetAllQuests(included)
     local quests = ns.lastPlan and ns.lastPlan.quests
     if type(quests) ~= "table" then return end
@@ -674,7 +715,8 @@ local function rememberHandoffs(plan, rows)
     end
     if type(previous) == "table" then
         for acceptId, fromId in pairs(previous) do
-            if not live[acceptId] and not live[fromId] and not handoff[acceptId] then
+            if not live[acceptId] and not live[fromId] and not handoff[acceptId]
+                and (not ns.IsIncluded or ns.IsIncluded(acceptId)) then
                 handoff[acceptId] = fromId
             end
         end
@@ -786,7 +828,12 @@ function ns.Refresh(reasons)
     end
 
     local plan = ns.lastPlan
-    if ns.QuestView then plan.quests = ns.QuestView(rows) end
+    if ns.QuestView then
+        plan.quests = ns.QuestView(rows)
+        if ns.WithPendingQuests then
+            plan.quests = ns.WithPendingQuests(plan.quests, rows, plan.steps)
+        end
+    end
     rememberHandoffs(plan, rows)
     ns.lastErr = err
     if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then

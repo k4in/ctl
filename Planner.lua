@@ -319,6 +319,94 @@ function ns.QuestView(rows)
     return view
 end
 
+local function pendingEntry(questId)
+    local dbReady = ns.DBReady and ns.DBReady()
+    local name = (dbReady and ns.QuestName(questId)) or ("Quest " .. questId)
+    local level
+    if dbReady then
+        local questLevel = ns.QuestNumber(questId, "questLevel")
+        if questLevel and questLevel > 0 then level = questLevel end
+    end
+    local zone = "No zone"
+    if dbReady then
+        local area = ns.QuestNumber(questId, "zoneOrSort")
+        if type(area) == "number" and area > 0 and ns.ZoneName then
+            local label = ns.ZoneName(area)
+            if type(label) == "string" and label ~= "" then zone = label end
+        end
+    end
+    local chain = dbReady and ns.ChainInfo and ns.ChainInfo(questId) or nil
+    return {
+        id = questId,
+        name = name,
+        level = level,
+        zone = zone,
+        included = true,
+        chainEnabled = chain and ns.ChainEnabled and ns.ChainEnabled(questId) or false,
+        chain = chain,
+        complete = false,
+        known = dbReady and ns.QuestExists(questId) or false,
+        dungeon = ns.IsDungeonQuest and ns.IsDungeonQuest(questId) or false,
+        objectives = {},
+        pending = true,
+    }
+end
+
+-- After a turn-in, the chain is gone from the Blizzard log until the follow-up
+-- is accepted. Keep that follow-up in the quest list while the guide still has it.
+function ns.WithPendingQuests(view, rows, steps)
+    if type(view) ~= "table" then view = {} end
+    local seen, live = {}, {}
+    for _, quest in ipairs(view) do
+        if type(quest.id) == "number" then seen[quest.id] = true end
+    end
+    for _, row in ipairs(rows or {}) do
+        if type(row.id) == "number" then live[row.id] = true end
+    end
+    local candidates = {}
+    local function consider(id)
+        if type(id) ~= "number" or id <= 0 or seen[id] or live[id] then return end
+        if ns.IsIncluded and not ns.IsIncluded(id) then return end
+        candidates[id] = true
+    end
+    for _, stop in ipairs(steps or {}) do
+        if stop.followup then consider(stop.questId) end
+        if type(stop.acceptId) == "number" and (stop.awaitAccept or stop.followup) then
+            consider(stop.acceptId)
+        end
+    end
+    local function chainIds(id)
+        local chain = type(ns.ChainInfo) == "function" and ns.ChainInfo(id) or nil
+        if chain and type(chain.ids) == "table" then return chain.ids end
+        return { id }
+    end
+    local function listed(ids)
+        for _, member in ipairs(ids) do
+            if live[member] then return true end
+        end
+        return false
+    end
+    local covered, chosen = {}, {}
+    for id in pairs(candidates) do
+        if not covered[id] then
+            local members = chainIds(id)
+            local best, bestAt
+            for index, member in ipairs(members) do
+                covered[member] = true
+                if candidates[member] and not listed(members) and (not bestAt or index < bestAt) then
+                    best, bestAt = member, index
+                end
+            end
+            if best then chosen[#chosen + 1] = best end
+        end
+    end
+    table.sort(chosen)
+    for _, id in ipairs(chosen) do
+        view[#view + 1] = pendingEntry(id)
+    end
+    return view
+end
+
 function ns.BuildPlan(rows, player)
     if ns.dbOpen == nil then ns.OpenDatabase() end
     player = player or {}
@@ -403,7 +491,8 @@ function ns.BuildPlan(rows, player)
     if dbReady and type(handoff) == "table" then
         local pending = {}
         for acceptId in pairs(handoff) do
-            if type(acceptId) == "number" and not inLog[acceptId] and not addedFollow[acceptId] then
+            if type(acceptId) == "number" and not inLog[acceptId] and not addedFollow[acceptId]
+                and (not ns.IsIncluded or ns.IsIncluded(acceptId)) then
                 pending[#pending + 1] = acceptId
             end
         end
@@ -453,9 +542,10 @@ function ns.BuildPlan(rows, player)
         end
     end
 
+    local ordered = ns.ApplySkips(orderStops(stops, objCount, player))
     return {
-        quests = view,
-        steps = ns.ApplySkips(orderStops(stops, objCount, player)),
+        quests = ns.WithPendingQuests(view, rows, ordered),
+        steps = ordered,
         warning = warning,
     }
 end

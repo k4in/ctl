@@ -27,6 +27,7 @@ local GROUP_CODE = hexColor(GROUP_R, GROUP_G, GROUP_B)
 local CHAIN_CURRENT = hexColor(0.75, 0.48, 0.95)
 local CHAIN_DONE = hexColor(0.30, 0.55, 0.32)
 local CHAIN_NEXT = hexColor(0.70, 0.70, 0.70)
+local CHAIN_ACCEPT = hexColor(1, 0.10, 0.10)
 
 local function levelPrefix(level, questId)
     if type(level) ~= "number" or level <= 0 or type(ns.LevelTone) ~= "function" then return "" end
@@ -634,6 +635,35 @@ local function stepRow(parent)
     end)
     row.action:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    row.drop = CreateFrame("Button", nil, row)
+    row.drop:SetSize(22, 22)
+    row.drop:SetPoint("RIGHT", row.action, "LEFT", -4, 0)
+    row.drop:RegisterForClicks("LeftButtonUp")
+    row.drop:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    row.drop.label = row.drop:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    row.drop.label:SetPoint("CENTER", 1, 0)
+    row.drop.label:SetText("x")
+    row.drop.label:SetTextColor(1, 0.25, 0.25)
+    row.drop:Hide()
+    row.drop:SetScript("OnClick", function()
+        if silent or not row.stop or type(ns.DropQuestLine) ~= "function" then return end
+        local stop = row.stop
+        local questId
+        if stop.awaitAccept and type(stop.acceptId) == "number" and stop.acceptId > 0 then
+            questId = stop.acceptId
+        elseif type(stop.questId) == "number" and stop.questId > 0 then
+            questId = stop.questId
+        end
+        if type(questId) == "number" then ns.DropQuestLine(questId) end
+    end)
+    row.drop:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Remove", 1, 0.82, 0)
+        GameTooltip:AddLine("Removes this quest chain from the guide and the quest list.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    row.drop:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
     row.header = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     row.header:SetPoint("TOPLEFT", 12, -8)
     row.header:SetText("CURRENT STEP")
@@ -845,7 +875,8 @@ local function fillSteps(steps)
         local stop = index and list[index]
         local here = stop and index == indexes[1]
         local showIcon = stop and (here or stop.skipped) or false
-        local inset = showIcon and 36 or 10
+        local showDrop = here and stop and waitingToAccept(stop) or false
+        local inset = showDrop and 64 or (showIcon and 36 or 10)
         row.index = stop and index or nil
         row.stop = stop
         row.hover:Hide()
@@ -862,6 +893,11 @@ local function fillSteps(steps)
             row.action:Show()
         else
             row.action:Hide()
+        end
+        if showDrop then
+            row.drop:Show()
+        else
+            row.drop:Hide()
         end
 
         local height = ROW_STEP
@@ -1100,6 +1136,10 @@ local function showQuestTip(row, owner)
     addArea(row.questId)
     if row.known == false then GameTooltip:AddLine("Not in QuestieDB.", 0.8, 0.8, 0.8) end
     addQuestKind(row.questId)
+    if row.pending then
+        GameTooltip:AddLine("Accept this quest to continue the chain.", 1, 0.35, 0.35, true)
+        GameTooltip:AddLine("Uncheck to remove this chain from the guide and the quest list.", 0.7, 0.7, 0.7, true)
+    end
     if row.chainText then
         GameTooltip:AddLine("Expand the chain to choose follow-ups.", 0.7, 0.7, 0.7, true)
     end
@@ -1125,7 +1165,11 @@ local function showChainTip(row, owner)
             GameTooltip:AddLine("Check to include every quest through this one.", 0.8, 0.8, 0.8, true)
         end
     elseif row.role == "current" then
-        GameTooltip:AddLine("This is the quest in your log.", 0.8, 0.8, 0.8, true)
+        if row.pendingAccept then
+            GameTooltip:AddLine("Accept this quest to continue the chain.", 1, 0.35, 0.35, true)
+        else
+            GameTooltip:AddLine("This is the quest in your log.", 0.8, 0.8, 0.8, true)
+        end
     else
         GameTooltip:AddLine("Earlier in the chain.", 0.8, 0.8, 0.8, true)
     end
@@ -1143,9 +1187,11 @@ local function paintExpand(button, open)
     button:SetHighlightTexture("Interface\\Buttons\\UI-PlusButton-Hilight")
 end
 
-local function chainMemberText(member, finished)
+local function chainMemberText(member, finished, accepting)
     local tone = CHAIN_NEXT
-    if member.role == "current" then
+    if accepting and member.role == "current" then
+        tone = CHAIN_ACCEPT
+    elseif member.role == "current" then
         tone = CHAIN_CURRENT
     elseif finished then
         tone = CHAIN_DONE
@@ -1234,7 +1280,12 @@ local function questRow(parent)
     styleCheck(row.check)
     row.check:SetScript("OnClick", function(self)
         if silent or not row.questId then return end
-        ns.SetIncluded(row.questId, self:GetChecked() and true or false)
+        local on = self:GetChecked() and true or false
+        if row.pending and not on and type(ns.DropQuestLine) == "function" then
+            ns.DropQuestLine(row.questId)
+            return
+        end
+        ns.SetIncluded(row.questId, on)
         ns.RequestRefresh("manual")
     end)
     row.check:SetScript("OnEnter", function(self)
@@ -1305,6 +1356,10 @@ local function questRow(parent)
     row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
     row.hit:SetScript("OnClick", function()
         if silent or not row.questId then return end
+        if row.pending and ns.IsIncluded(row.questId) and type(ns.DropQuestLine) == "function" then
+            ns.DropQuestLine(row.questId)
+            return
+        end
         ns.SetIncluded(row.questId, not ns.IsIncluded(row.questId))
         ns.RequestRefresh("manual")
     end)
@@ -1388,6 +1443,7 @@ local function fillQuests(plan)
             row:SetPoint("TOPRIGHT", child, "TOPRIGHT", 0, -y)
             row:Show()
             row.questId = quest.id
+            row.pending = quest.pending and true or false
             row.known = quest.known
             row.dungeon = quest.dungeon
             row.tipName = quest.name
@@ -1433,10 +1489,11 @@ local function fillQuests(plan)
                 row.name:SetPoint("RIGHT", row, "RIGHT", -8, 0)
                 row.hit:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             end
-            local ready = quest.complete and "  |cff40ff40- done -|r" or ""
+            local ready = (quest.complete and not quest.pending) and "  |cff40ff40- done -|r" or ""
+            local titleColor = quest.pending and CHAIN_ACCEPT or "|cffffffff"
             row.name:SetTextColor(1, 1, 1)
             row.name:SetAlpha(1)
-            row.name:SetText(levelPrefix(quest.level, quest.id) .. "|cffffffff" .. (quest.name or "Quest") .. "|r" .. ready)
+            row.name:SetText(levelPrefix(quest.level, quest.id) .. titleColor .. (quest.name or "Quest") .. "|r" .. ready)
             row.check:SetChecked(quest.included and true or false)
             y = y + ROW_QUEST
 
@@ -1456,6 +1513,7 @@ local function fillQuests(plan)
                     childRow.logQuestId = quest.id
                     childRow.memberId = member.id
                     childRow.role = member.role
+                    childRow.pendingAccept = quest.pending and member.role == "current" or false
                     childRow.parentIncluded = quest.included and true or false
                     childRow.included = member.included and true or false
                     childRow.level = member.level
@@ -1467,7 +1525,7 @@ local function fillQuests(plan)
                     end
                     childRow.done = finished
                     childRow.name:SetTextColor(1, 1, 1)
-                    childRow.name:SetText(chainMemberText(member, finished))
+                    childRow.name:SetText(chainMemberText(member, finished, childRow.pendingAccept))
                     if member.role == "current" then
                         childRow.check:Enable()
                         childRow.check:SetChecked(quest.included and true or false)
