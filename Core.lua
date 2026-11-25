@@ -774,6 +774,9 @@ function ns.Refresh(reasons)
         rememberHandoffs(plan, rows)
         ns.lastPlan, ns.lastErr = plan, err
         ns.windowStart = 1
+        local first = plan.steps and plan.steps[1]
+        local giver = first and ns.AcceptTarget and ns.AcceptTarget(first)
+        ns.acceptRouted = (type(giver) == "table" and ns.HasMapPoint and ns.HasMapPoint(giver)) and true or nil
         if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
             ns.PushRoute(plan, 1, reasons)
         end
@@ -791,6 +794,11 @@ function ns.Refresh(reasons)
     end
     if reasons.skip then applyPendingSkip(plan) end
     if catchUp(plan, rows) then reasons.advance = true end
+    local current = plan and plan.steps and plan.steps[ns.windowStart or 1]
+    local giver = current and ns.AcceptTarget and ns.AcceptTarget(current)
+    local redirect = type(giver) == "table" and ns.HasMapPoint and ns.HasMapPoint(giver)
+    if redirect or ns.acceptRouted then reasons.handoff = true end
+    ns.acceptRouted = redirect and true or nil
     local fromIndex = ns.windowStart or 1
     if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
         ns.PushRoute(plan, fromIndex, reasons)

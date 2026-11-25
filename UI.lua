@@ -663,14 +663,24 @@ local function stepRow(parent)
         row.hover:Show()
         if not row.stop then return end
         local stop = row.stop
+        local tipId = stop.questId
+        local title = stop.questName or "Step"
+        if stop.awaitAccept and type(stop.acceptId) == "number" and stop.acceptId > 0 then
+            tipId = stop.acceptId
+            if type(stop.acceptName) == "string" and stop.acceptName ~= "" then title = stop.acceptName end
+        end
         GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-        GameTooltip:SetText(stop.questName or "Step", 1, 0.82, 0)
-        if stop.text then GameTooltip:AddLine(cleanTip(stop.text), 1, 1, 1, true) end
-        if stop.note and stop.note ~= "" then GameTooltip:AddLine(stop.note, 0.8, 0.8, 0.8, true) end
+        GameTooltip:SetText(title, 1, 0.82, 0)
+        if not stop.awaitAccept and stop.text and stop.text ~= title then
+            GameTooltip:AddLine(cleanTip(stop.text), 1, 1, 1, true)
+        end
+        if not stop.awaitAccept and stop.note and stop.note ~= "" then
+            GameTooltip:AddLine(stop.note, 0.8, 0.8, 0.8, true)
+        end
         if stop.dungeon then GameTooltip:AddLine("Dungeon Quest", DUNGEON_R, DUNGEON_G, DUNGEON_B) end
-        addQuestBody(stop.questId, questObjectives(stop.questId))
-        addContacts(stop.questId)
-        addFollowups(stop.questId)
+        addQuestBody(tipId, questObjectives(tipId))
+        addContacts(tipId)
+        addFollowups(tipId)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Left click opens the quest in the quest log.", 0.7, 0.7, 0.7, true)
         GameTooltip:AddLine("Shift+Left click recalculates the guide with this step as the start.", 0.7, 0.7, 0.7, true)
@@ -737,6 +747,32 @@ local function anchorLine(row, top, inset, large)
     if row.line.SetMaxLines then row.line:SetMaxLines(large and 2 or 1) end
 end
 
+local function questTitle(stop)
+    if type(stop.questName) == "string" and stop.questName ~= "" then return stop.questName end
+    return stop.text or ""
+end
+
+local function waitingToAccept(stop)
+    return stop.awaitAccept or stop.followup
+end
+
+-- Turn-in and accept steps name the quest. Objectives keep their own text.
+local function stepCaption(stop, current)
+    if current and waitingToAccept(stop) then
+        local name = stop.acceptName
+        if type(name) ~= "string" or name == "" then name = questTitle(stop) end
+        return "Accept", name
+    end
+    if stop.kind == "turnin" then
+        local tag = "Turn in"
+        if stop.followup then tag = tag .. " · Follow-up" end
+        return tag, questTitle(stop)
+    end
+    local tag = "Objective"
+    if stop.followup then tag = tag .. " · Follow-up" end
+    return tag, stop.text or ""
+end
+
 local function currentDetails(stop)
     local lines = {}
     local function add(text, r, g, b)
@@ -744,26 +780,33 @@ local function currentDetails(stop)
             lines[#lines + 1] = { text = text, r = r, g = g, b = b }
         end
     end
-    if stop.kind == "objective" and ns.ProgressLabel then
+    local accepting = waitingToAccept(stop)
+    if not accepting and stop.kind == "objective" and ns.ProgressLabel then
         add(ns.ProgressLabel(stop), 1, 0.9, 0.55)
     end
-    add(locationText(stop.areaId, stop.x, stop.y), 0.9, 0.9, 0.9)
+    local shown = stop
+    if accepting and ns.RouteStop then shown = ns.RouteStop(stop) or stop end
+    add(locationText(shown.areaId, shown.x, shown.y), 0.9, 0.9, 0.9)
     if ns.QuestContacts and ns.ContactText then
-        local giver, turnin = ns.QuestContacts(stop.questId)
+        local contactId = stop.questId
+        if accepting and type(stop.acceptId) == "number" and stop.acceptId > 0 then
+            contactId = stop.acceptId
+        end
+        local giver, turnin = ns.QuestContacts(contactId)
         local giverText = ns.ContactText(giver)
         local turninText = ns.ContactText(turnin)
         if giverText then add("Quest giver: " .. giverText, 0.75, 0.9, 1) end
-        if turninText then add("Turn in: " .. turninText, 0.7, 1, 0.75) end
+        if turninText and not accepting then add("Turn in: " .. turninText, 0.7, 1, 0.75) end
     end
-    if type(stop.acceptName) == "string" and stop.acceptName ~= "" and not stop.awaitAccept then
+    if type(stop.acceptName) == "string" and stop.acceptName ~= "" and not accepting then
         add("Accept: " .. stop.acceptName, 0.75, 0.9, 1)
     end
     local meta = {}
-    if stop.questName and stop.questName ~= "" then meta[#meta + 1] = stop.questName end
-    if stop.note and stop.note ~= "" then meta[#meta + 1] = stop.note end
+    if not accepting and stop.questName and stop.questName ~= "" then meta[#meta + 1] = stop.questName end
+    if not accepting and stop.note and stop.note ~= "" then meta[#meta + 1] = stop.note end
     if stop.dungeon then meta[#meta + 1] = DUNGEON_CODE .. "Dungeon Quest|r" end
     if stop.skipped then meta[#meta + 1] = "skipped" end
-    if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
+    if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(shown) then
         meta[#meta + 1] = "no map"
     end
     add(table.concat(meta, "   ·   "), 0.7, 0.7, 0.7)
@@ -831,14 +874,7 @@ local function fillSteps(steps)
             row.line:SetTextColor(0.7, 0.7, 0.7)
         elseif here then
             anchorLine(row, -28, inset, true)
-            local tag = stop.kind == "turnin" and "Turn in" or "Objective"
-            local label = stop.text or ""
-            if stop.awaitAccept and type(stop.acceptName) == "string" and stop.acceptName ~= "" then
-                tag = "Accept"
-                label = stop.acceptName
-            elseif stop.followup then
-                tag = tag .. " · Follow-up"
-            end
+            local tag, label = stepCaption(stop, true)
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
             row.line:SetTextColor(1, 0.86, 0.35)
@@ -847,10 +883,9 @@ local function fillSteps(steps)
             hideDetails(row)
             row.sub:Show()
             anchorLine(row, -4, inset, false)
-            local tag = stop.kind == "turnin" and "Turn in" or "Objective"
-            if stop.followup then tag = tag .. " · Follow-up" end
+            local tag, label = stepCaption(stop, false)
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
-            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, stop.text or ""))
+            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
             if stop.skipped then
                 row.line:SetTextColor(0.55, 0.55, 0.55)
             elseif stop.followup then

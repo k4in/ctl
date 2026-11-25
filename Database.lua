@@ -682,17 +682,15 @@ function ns.CollectStops(questId, spec)
         end
     end
 
-    local turninText = "Turn in"
+    -- The step names the quest. The NPC stays on the map point, not in the title.
+    local turninText = questName
+    if type(turninText) ~= "string" or turninText == "" then turninText = "Turn in" end
     local point
     if ns.QuestExists(questId) then
         local finishedBy = ns.QuestCall(questId, "finishedBy") or {}
         point = bestOfIds(NpcDB, finishedBy[1], player, prefer, 8)
         local objectPoint = bestOfIds(ObjectDB, finishedBy[2], player, prefer, 6)
         if objectPoint and (not point or objectPoint.score < point.score) then point = objectPoint end
-        if point and point.name then turninText = "Turn in to " .. point.name end
-    end
-    if spec.complete then
-        turninText = point and point.name and ("Ready to turn in to " .. point.name) or "Ready to turn in"
     end
 
     addStop(stops, {
@@ -885,4 +883,52 @@ function ns.QuestContacts(questId, player)
     local finished = ns.QuestCall(questId, "finishedBy") or {}
     return bestContact(started[1], started[2], started[3], player, prefer),
         bestContact(finished[1], finished[2], finished[3], player, prefer)
+end
+
+-- The follow-up is accepted from its own Questie giver, which may not be the
+-- NPC who took the previous quest.
+function ns.AcceptTarget(stop)
+    if type(stop) ~= "table" then return nil end
+    local questId
+    if stop.awaitAccept and type(stop.acceptId) == "number" and stop.acceptId > 0 then
+        questId = stop.acceptId
+    elseif stop.followup and type(stop.questId) == "number" and stop.questId > 0 then
+        questId = stop.questId
+    else
+        return nil
+    end
+    local player
+    if type(ns.PlayerLocation) == "function" then
+        local ok, value = pcall(ns.PlayerLocation)
+        if ok then player = value end
+    end
+    local giver = ns.QuestContacts(questId, player)
+    if type(giver) ~= "table" then return nil end
+    giver.questId = questId
+    return giver
+end
+
+-- While that quest is still unaccepted, the current step points at its giver.
+function ns.RouteStop(stop)
+    if type(stop) ~= "table" then return stop end
+    local giver = ns.AcceptTarget(stop)
+    if type(giver) ~= "table" or not ns.HasMapPoint(giver) then return stop end
+    local name = stop.acceptName
+    if type(name) ~= "string" or name == "" then name = stop.questName end
+    if type(name) ~= "string" or name == "" then name = stop.text end
+    return {
+        areaId = giver.areaId,
+        x = giver.x,
+        y = giver.y,
+        questId = giver.questId or stop.questId,
+        questName = name,
+        text = name,
+        kind = stop.kind,
+        dungeon = stop.dungeon,
+        awaitAccept = stop.awaitAccept,
+        followup = stop.followup,
+        acceptId = stop.acceptId,
+        acceptName = stop.acceptName,
+        sourceName = giver.name,
+    }
 end

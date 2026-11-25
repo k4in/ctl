@@ -40,13 +40,16 @@ function ns.ShouldPushRoute(reasons)
     end
     if reasons.step or reasons.manual or reasons.router or reasons.abandon
         or reasons.plan or reasons.skip or reasons.login
-        or reasons.rebuild or reasons.advance then
+        or reasons.rebuild or reasons.advance or reasons.handoff then
         return true
     end
     return false
 end
 
 local function stopTitle(stop)
+    if stop.kind == "turnin" or stop.awaitAccept or stop.followup then
+        if type(stop.questName) == "string" and stop.questName ~= "" then return stop.questName end
+    end
     if stop.questName and stop.text and stop.questName ~= stop.text then
         return stop.questName .. ": " .. stop.text
     end
@@ -64,6 +67,7 @@ local function mappedStops(steps, fromIndex)
     local last = math.min(#steps, fromIndex + routeLimit() - 1)
     for index = fromIndex, last do
         local stop = steps[index]
+        if index == fromIndex and ns.RouteStop then stop = ns.RouteStop(stop) end
         if ns.HasMapPoint(stop) then
             mapped[#mapped + 1] = { index = index, stop = stop }
         else
