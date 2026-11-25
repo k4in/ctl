@@ -400,6 +400,67 @@ local function norm(text)
     return (text:match("^%s*(.-)%s*$")) or ""
 end
 
+local function objectiveScore(lineText, key, sourceName)
+    local lineKey = norm(lineText)
+    if lineKey == "" then return 0 end
+    if key ~= "" and lineKey == key then return 100 end
+    if key ~= "" and #key >= 6 and #lineKey >= 6
+        and (lineKey:find(key, 1, true) or key:find(lineKey, 1, true)) then
+        return 80
+    end
+    local name = norm(sourceName)
+    if #name >= 4 and lineKey:find(name, 1, true) then return 60 end
+    return 0
+end
+
+local function bestObjective(stop, row)
+    local key = norm(stop.text)
+    local best, bestScore, tied
+    for _, line in ipairs(row.objectives or {}) do
+        local score = objectiveScore(line.text, key, stop.sourceName)
+        if score > 0 and (not bestScore or score > bestScore) then
+            best, bestScore, tied = line, score, false
+        elseif bestScore and score == bestScore then
+            tied = true
+        end
+    end
+    if tied or not best then return nil end
+    return best
+end
+
+-- Updates the live counter on a step that is still in the plan. A finished
+-- leading step is how the window advances; the step list itself stays put.
+function ns.SyncStop(stop, row)
+    if type(stop) ~= "table" then return false end
+    local present = type(row) == "table"
+    if present and stop.followup then
+        stop.followup = nil
+        if stop.note == "not in the log yet" then stop.note = nil end
+    end
+    if stop.kind == "turnin" then
+        if present or stop.followup then return false end
+        return true
+    end
+    if not present then
+        if stop.followup then return false end
+        return true
+    end
+    if row.complete then return true end
+    local line = bestObjective(stop, row)
+    if line then
+        stop.progressText = line.text
+        stop.numFulfilled = line.numFulfilled
+        stop.numRequired = line.numRequired
+        stop.objectiveDone = line.finished and true or false
+        return line.finished and true or false
+    end
+    if type(row.objectives) ~= "table" or #row.objectives == 0 then return false end
+    for _, entry in ipairs(row.objectives) do
+        if not entry.finished then return false end
+    end
+    return true
+end
+
 local function preferZone(questId)
     local zone = ns.QuestNumber(questId, "zoneOrSort")
     if zone and zone > 0 then return zone end

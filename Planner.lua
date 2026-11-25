@@ -272,18 +272,11 @@ local function orderStops(stops, objCount, player)
     return ordered
 end
 
-function ns.BuildPlan(rows, player)
-    if ns.dbOpen == nil then ns.OpenDatabase() end
-    player = player or {}
-
-    local inLog = {}
-    for _, row in ipairs(rows) do inLog[row.id] = true end
-
-    local view, stops, objCount = {}, {}, {}
-    local addedFollow = {}
-    local dbReady = ns.DBReady()
-
-    for _, row in ipairs(rows) do
+function ns.QuestView(rows)
+    if ns.dbOpen == nil and ns.OpenDatabase then ns.OpenDatabase() end
+    local dbReady = ns.DBReady and ns.DBReady()
+    local view = {}
+    for _, row in ipairs(rows or {}) do
         local name = row.title
         if type(name) ~= "string" or name == "" then
             name = (dbReady and ns.QuestName(row.id)) or ("Quest " .. row.id)
@@ -294,13 +287,11 @@ function ns.BuildPlan(rows, player)
             local questLevel = ns.QuestNumber(row.id, "questLevel")
             if questLevel and questLevel > 0 then level = questLevel end
         end
-
         local zone = row.zone
         if (type(zone) ~= "string" or zone == "") and dbReady then
             local area = ns.QuestNumber(row.id, "zoneOrSort")
             if type(area) == "number" and area > 0 then zone = ns.ZoneName(area) end
         end
-
         view[#view + 1] = {
             id = row.id,
             name = name,
@@ -314,6 +305,35 @@ function ns.BuildPlan(rows, player)
             dungeon = ns.IsDungeonQuest and ns.IsDungeonQuest(row.id) or false,
             objectives = row.objectives,
         }
+    end
+    table.sort(view, function(a, b)
+        if a.included ~= b.included then return a.included end
+        local left, right = a.level or 0, b.level or 0
+        if left ~= right then return left < right end
+        return (a.name or "") < (b.name or "")
+    end)
+    return view
+end
+
+function ns.BuildPlan(rows, player)
+    if ns.dbOpen == nil then ns.OpenDatabase() end
+    player = player or {}
+
+    local inLog = {}
+    for _, row in ipairs(rows) do inLog[row.id] = true end
+
+    local view = ns.QuestView(rows)
+    local viewById = {}
+    for _, quest in ipairs(view) do viewById[quest.id] = quest end
+
+    local stops, objCount = {}, {}
+    local addedFollow = {}
+    local dbReady = ns.DBReady()
+
+    for _, row in ipairs(rows) do
+        local quest = viewById[row.id]
+        local name = quest and quest.name or ("Quest " .. row.id)
+        local chain = quest and quest.chain or nil
 
         if ns.IsIncluded(row.id) then
             local questStops
@@ -372,13 +392,6 @@ function ns.BuildPlan(rows, player)
             end
         end
     end
-
-    table.sort(view, function(a, b)
-        if a.included ~= b.included then return a.included end
-        local left, right = a.level or 0, b.level or 0
-        if left ~= right then return left < right end
-        return (a.name or "") < (b.name or "")
-    end)
 
     local warning
     if not dbReady then warning = ns.dbMessage or "QuestieDB is not loaded." end

@@ -375,6 +375,7 @@ function ns.SkipStep(index)
     if not stop or stop.skipped or not ns.StepKey then return end
     if combatLocked() then
         ns.CharDB().skipped[ns.StepKey(stop)] = true
+        ns.pendingSkip = index
         ns.routeFrom = nil
         ns.RequestRefresh("skip")
         return
@@ -415,7 +416,8 @@ function ns.ToggleNavigation()
     local db = ns.CharDB()
     if db.router ~= "tomtom" and db.router ~= "spf" then return false end
     db.navigating = not db.navigating
-    ns.RefreshPlan()
+    ns.routeFrom = nil
+    ns.RequestRefresh("router")
     return true
 end
 
@@ -486,6 +488,122 @@ local function pruneSkips(rows, plan)
     end
 end
 
+local function questInPlan(plan, questId)
+    local steps = plan and plan.steps
+    if type(steps) ~= "table" or type(questId) ~= "number" then return false end
+    for index = 1, #steps do
+        if steps[index].questId == questId then return true end
+    end
+    return false
+end
+
+local function eachAccepted(accepts, fn)
+    if type(accepts) ~= "table" then return end
+    for questId, on in pairs(accepts) do
+        if on and type(questId) == "number" and questId > 0 then fn(questId) end
+    end
+end
+
+-- A follow-up that was already routed keeps that chain when it enters the log.
+local function keepPlannedChain(questId, plan)
+    local db = ns.CharDB()
+    db.tracked[questId] = true
+    db.decided[questId] = true
+    if type(ns.ChainInfo) ~= "function" then return end
+    local chain = ns.ChainInfo(questId)
+    if type(chain) ~= "table" or type(chain.ids) ~= "table" then return end
+    local indexOf = {}
+    for index, id in ipairs(chain.ids) do indexOf[id] = index end
+    local home = chain.index or indexOf[questId] or 1
+    local furthest = home
+    local throughId = chain.ids[home]
+    for _, stop in ipairs(plan and plan.steps or {}) do
+        local at = indexOf[stop.questId]
+        if at and at > furthest then
+            furthest = at
+            throughId = stop.questId
+        end
+    end
+    if type(db.chainThrough) ~= "table" then db.chainThrough = {} end
+    db.chainOff[questId] = nil
+    if furthest >= #chain.ids then
+        db.chain[questId] = true
+        db.chainThrough[questId] = nil
+    elseif furthest > home then
+        db.chain[questId] = true
+        db.chainThrough[questId] = throughId
+    else
+        db.chain[questId] = false
+        db.chainThrough[questId] = questId
+    end
+end
+
+local function rowsById(rows)
+    local byId = {}
+    for _, row in ipairs(rows) do
+        if type(row.id) == "number" then byId[row.id] = row end
+    end
+    return byId
+end
+
+local function applyPendingSkip(plan)
+    local index = ns.pendingSkip
+    ns.pendingSkip = nil
+    local steps = plan and plan.steps
+    if type(index) ~= "number" or type(steps) ~= "table" or not ns.StepKey then return end
+    local stop = steps[index]
+    if not stop or not ns.CharDB().skipped[ns.StepKey(stop)] then return end
+    stop.skipped = true
+    table.remove(steps, index)
+    steps[#steps + 1] = stop
+    local start = ns.windowStart or 1
+    if type(start) ~= "number" or start < 1 then start = 1 end
+    if start > index then start = start - 1 end
+    if #steps > 0 and start > #steps then start = #steps end
+    if start < 1 then start = 1 end
+    ns.windowStart = start
+end
+
+-- Finished steps at the front of the window drop away. Later finished steps wait.
+local function catchUp(plan, rows)
+    if type(ns.SyncStop) ~= "function" then return false end
+    local steps = plan and plan.steps or {}
+    local byId = rowsById(rows)
+    for index = 1, #steps do
+        ns.SyncStop(steps[index], byId[steps[index].questId])
+    end
+    local start = ns.windowStart or 1
+    if type(start) ~= "number" or start < 1 then start = 1 end
+    local before = start
+    while start <= #steps do
+        local stop = steps[start]
+        if stop.skipped then break end
+        if not ns.SyncStop(stop, byId[stop.questId]) then break end
+        start = start + 1
+    end
+    ns.windowStart = start
+    return start ~= before
+end
+
+-- Login, the refresh button, shift-click, membership edits, an abandoned quest,
+-- and a brand-new auto-added quest build a new order. A follow-up that is
+-- already a step never does, and neither does finishing a step.
+local function needsRebuild(reasons, accepts, rows)
+    if reasons.login or reasons.plan or reasons.manual or reasons.abandon then
+        return true
+    end
+    if reasons.accept and ns.CharDB().autoTrack == true then
+        local live = rowsById(rows)
+        local rebuild = false
+        eachAccepted(accepts, function(questId)
+            if live[questId] and not questInPlan(ns.lastPlan, questId) then rebuild = true end
+        end)
+        if rebuild then return true end
+    end
+    if not ns.lastPlan then return true end
+    return false
+end
+
 function ns.Refresh(reasons)
     if not ns.ready then return end
     reasons = reasons or {}
@@ -508,42 +626,72 @@ function ns.Refresh(reasons)
         return
     end
 
+    -- The accept event can land before the quest is in the log. The log refresh
+    -- that first sees it still counts, so auto-add is not lost on the way.
+    local accepts = nil
+    if type(ns.fresh) == "table" then
+        for _, row in ipairs(rows) do
+            if ns.fresh[row.id] then
+                reasons.accept = true
+                if type(accepts) ~= "table" then accepts = {} end
+                accepts[row.id] = true
+            end
+        end
+    end
+    if reasons.accept and type(ns.pendingAccepts) == "table" then
+        if type(accepts) ~= "table" then accepts = {} end
+        for questId, on in pairs(ns.pendingAccepts) do
+            if on and type(questId) == "number" then accepts[questId] = true end
+        end
+        ns.pendingAccepts = nil
+    end
+
     pruneSaved(rows)
     for _, row in ipairs(rows) do ns.DecideQuest(row.id) end
     if takeSnapshot(rows) then reasons.objective = true end
     if reasons.removed and not reasons.turnin then reasons.abandon = true end
+    eachAccepted(accepts, function(questId)
+        if questInPlan(ns.lastPlan, questId) then keepPlannedChain(questId, ns.lastPlan) end
+    end)
 
-    local player = ns.PlayerLocation()
-    if type(origin) == "table" and type(origin.areaId) == "number" and origin.areaId > 0 then
-        player = {
-            areaId = origin.areaId,
-            x = origin.x,
-            y = origin.y,
-            zoneName = ns.ZoneName(origin.areaId),
-            continent = ns.ContinentOfArea(origin.areaId),
-        }
-    end
-    local plan = ns.BuildPlan(rows, player)
-    if type(origin) == "table" and origin.key and ns.PromoteStep then
-        ns.PromoteStep(plan.steps, origin.key)
-    end
-    pruneSkips(rows, plan)
-    ns.lastPlan, ns.lastErr = plan, err
-
-    local fromIndex = 1
-    local directed = reasons.step
-        and not (reasons.accept or reasons.turnin or reasons.objective or reasons.manual
-            or reasons.router or reasons.plan or reasons.skip)
-    if directed and type(routeFrom) == "number" then fromIndex = routeFrom end
-
-    local resetWindow = reasons.plan or reasons.skip or reasons.accept or reasons.turnin
-        or reasons.objective or reasons.manual or reasons.router or reasons.abandon or reasons.login
-    if directed then
-        ns.windowStart = fromIndex
-    elseif resetWindow or type(ns.windowStart) ~= "number" then
+    local rebuild = needsRebuild(reasons, accepts, rows)
+    if rebuild then
+        ns.pendingSkip = nil
+        reasons.rebuild = true
+        local player = ns.PlayerLocation()
+        if reasons.plan and type(origin) == "table" and type(origin.areaId) == "number" and origin.areaId > 0 then
+            player = {
+                areaId = origin.areaId,
+                x = origin.x,
+                y = origin.y,
+                zoneName = ns.ZoneName(origin.areaId),
+                continent = ns.ContinentOfArea(origin.areaId),
+            }
+        end
+        local plan = ns.BuildPlan(rows, player)
+        if reasons.plan and type(origin) == "table" and origin.key and ns.PromoteStep then
+            ns.PromoteStep(plan.steps, origin.key)
+        end
+        pruneSkips(rows, plan)
+        ns.lastPlan, ns.lastErr = plan, err
         ns.windowStart = 1
+        if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
+            ns.PushRoute(plan, 1, reasons)
+        end
+        if ns.PaintOptions then ns.PaintOptions() end
+        if ns.Render then ns.Render(plan, err) end
+        return
     end
 
+    local plan = ns.lastPlan
+    if ns.QuestView then plan.quests = ns.QuestView(rows) end
+    ns.lastErr = err
+    if reasons.step and type(routeFrom) == "number" and routeFrom >= 1 then
+        ns.windowStart = routeFrom
+    end
+    if reasons.skip then applyPendingSkip(plan) end
+    if catchUp(plan, rows) then reasons.advance = true end
+    local fromIndex = ns.windowStart or 1
     if ns.ShouldPushRoute and ns.ShouldPushRoute(reasons) and ns.PushRoute then
         ns.PushRoute(plan, fromIndex, reasons)
     end
@@ -562,6 +710,8 @@ local function noteAccepted(questId)
     if type(questId) ~= "number" or questId <= 0 then return end
     ns.fresh = ns.fresh or {}
     ns.fresh[questId] = true
+    ns.pendingAccepts = ns.pendingAccepts or {}
+    ns.pendingAccepts[questId] = true
 end
 
 local eventFrame = CreateFrame("Frame")

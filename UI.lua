@@ -223,8 +223,8 @@ local function clip(line)
     if line.SetMaxLines then line:SetMaxLines(1) end
 end
 
-local options = chrome("ClearTheLogOptions", 480, 484, "posOptions", -260, 40, nil, {
-    minW = 440, minH = 460, sizeKey = "sizeOptions",
+local options = chrome("ClearTheLogOptions", 480, 380, "posOptions", -260, 40, nil, {
+    minW = 440, minH = 340, sizeKey = "sizeOptions",
 })
 options.title:SetText(ns.TITLE)
 options.subtitle:SetText("/ctl")
@@ -285,13 +285,11 @@ routerHint:SetPoint("TOPLEFT", 28, -154)
 routerHint:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerHint:SetJustifyH("LEFT")
 routerHint:SetWordWrap(true)
-routerHint:SetText("The guide button turns this provider on and off and recalculates the next 5 steps. None leaves that button inactive.")
+routerHint:SetText("The guide button turns this provider on and off and sends the next 5 steps. None leaves that button inactive.")
 
 routerStatus:SetPoint("TOPLEFT", 28, -198)
 routerStatus:SetPoint("RIGHT", options, "RIGHT", -28, 0)
 routerStatus:SetJustifyH("LEFT")
-
-section(options, "Refresh the route automatically", -226)
 
 local optionBoxes = {}
 
@@ -324,13 +322,9 @@ local function addToggle(text, y, field, tipTitle, tipBody)
     return box
 end
 
-addToggle("After accepting a quest", -250, "refreshAccept", "After accepting", "The waypoint is set again when you accept a quest.")
-addToggle("After turning in a quest", -276, "refreshTurnin", "After turning in", "The waypoint is set again when you turn in a quest.")
-addToggle("After completing an objective", -302, "refreshObjective", "After an objective", "The waypoint advances when an objective is finished. Quests with several objectives continue one step at a time.")
+section(options, "New quests", -226)
 
-section(options, "New quests", -336)
-
-addToggle("Add new quests to the guide", -360, "autoTrack", "Add automatically", "A quest you accept is added to the guide.")
+addToggle("Add new quests to the guide", -250, "autoTrack", "Add automatically", "A quest you accept is added to the guide. A follow-up that is already a step stays where it is.")
 
 local guideButton = CreateFrame("Button", nil, options, "UIPanelButtonTemplate")
 guideButton:SetSize(170, 24)
@@ -437,10 +431,10 @@ navButton:SetScript("OnEnter", function()
         GameTooltip:AddLine("Choose TomTom or Shortest Path Forever under /ctl. This button stays inactive until then.", 1, 1, 1, true)
     elseif db.navigating then
         GameTooltip:SetText("Navigation on", 1, 0.82, 0)
-        GameTooltip:AddLine("Turns " .. provider .. " off. Clicking recalculates the next 5 steps.", 1, 1, 1, true)
+        GameTooltip:AddLine("Turns " .. provider .. " off.", 1, 1, 1, true)
     else
         GameTooltip:SetText("Navigation off", 1, 0.82, 0)
-        GameTooltip:AddLine("Turns " .. provider .. " on and recalculates the next 5 steps.", 1, 1, 1, true)
+        GameTooltip:AddLine("Turns " .. provider .. " on and sends the next 5 steps.", 1, 1, 1, true)
     end
     GameTooltip:Show()
 end)
@@ -901,7 +895,7 @@ local function routeSentence()
     if db.router == "spf" and not ns.SpfReady() then
         return "Shortest Path Forever is not loaded.", true
     end
-    return "The route is set on the next refresh.", false
+    return "Waypoints update when the current step is finished.", false
 end
 
 function ns.RenderGuide(plan, err)

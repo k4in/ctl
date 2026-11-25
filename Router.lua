@@ -3,7 +3,7 @@ local _, ns = ...
 local OWNER = "ClearTheLog"
 
 -- Both routers get waypoints for the next few steps only. TomTom's arrow stays
--- on the first of them. Shortest Path waits on each stop until the next plan,
+-- on the first of them. Shortest Path waits on each stop until the next push,
 -- so arriving at a coordinate is not treated as finishing the objective.
 
 local function addonLoaded(name)
@@ -39,12 +39,10 @@ function ns.ShouldPushRoute(reasons)
         return ns.lastRouteRouter ~= nil
     end
     if reasons.step or reasons.manual or reasons.router or reasons.abandon
-        or reasons.plan or reasons.skip or reasons.open or reasons.login then
+        or reasons.plan or reasons.skip or reasons.login
+        or reasons.rebuild or reasons.advance then
         return true
     end
-    if reasons.accept and db.refreshAccept then return true end
-    if reasons.turnin and db.refreshTurnin then return true end
-    if reasons.objective and db.refreshObjective then return true end
     return false
 end
 
@@ -199,7 +197,6 @@ function ns.PushRoute(plan, fromIndex, reasons)
     local db = ns.CharDB()
     local steps = plan and plan.steps or {}
     if type(fromIndex) ~= "number" or fromIndex < 1 then fromIndex = 1 end
-    if #steps > 0 and fromIndex > #steps then fromIndex = #steps end
 
     if not db.router or db.navigating ~= true then
         if ns.lastRouteRouter then
@@ -214,9 +211,20 @@ function ns.PushRoute(plan, fromIndex, reasons)
         return
     end
 
+    if #steps > 0 and fromIndex > #steps then
+        clearSpf()
+        clearTomTom()
+        ns.activeStep = nil
+        ns.routeStatus = "No steps left."
+        ns.routeStatusError = false
+        remember(signatureOf({}, db.router), db.router)
+        return
+    end
+
     local mapped, skipped = mappedStops(steps, fromIndex)
     local signature = signatureOf(mapped, db.router)
-    local force = reasons.step or reasons.router or reasons.manual or reasons.plan or reasons.skip
+    local force = reasons.step or reasons.router or reasons.manual or reasons.plan
+        or reasons.skip or reasons.advance or reasons.rebuild or reasons.abandon or reasons.login
     if not force and signature == ns.lastRouteKey and db.router == ns.lastRouteRouter then return end
 
     ns.activeStep = #steps > 0 and fromIndex or nil
