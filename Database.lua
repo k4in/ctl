@@ -398,16 +398,32 @@ local function bestOfIds(db, ids, player, preferArea, limit)
     return best
 end
 
--- A collect step is the item, not a creature that happens to drop it. Kill
--- quests already name their own NPCs. Using drop NPCs here pins the route on
--- the wrong mob and lets that name steal another objective's progress. A chest
--- or a node is a place to collect, so those coordinates stay.
+local function idList(field, itemId)
+    if type(ItemDB) ~= "table" or type(ItemDB[field]) ~= "function" then return nil end
+    local ok, drops = pcall(ItemDB[field], itemId)
+    if not ok or type(drops) ~= "table" or drops[1] == nil then return nil end
+    return drops
+end
+
+local function inArea(point, areaId)
+    return type(point) == "table" and type(areaId) == "number" and areaId > 0 and point.areaId == areaId
+end
+
+-- The collect step stays the item. This is only where to go: mobs when the
+-- item drops, object spawns when it is picked up. A source in the quest zone
+-- wins over a nearer source of the other kind, so a passing mob does not
+-- replace the chest the quest is about.
 local function itemPoint(itemId, player, preferArea)
-    if type(itemId) ~= "number" or itemId == 0 or type(ItemDB) ~= "table" then return nil end
-    if type(ItemDB.objectDrops) ~= "function" then return nil end
-    local ok, drops = pcall(ItemDB.objectDrops, itemId)
-    if not ok then return nil end
-    return bestOfIds(ObjectDB, drops, player, preferArea, 8)
+    if type(itemId) ~= "number" or itemId == 0 then return nil end
+    local npcPoint = bestOfIds(NpcDB, idList("npcDrops", itemId), player, preferArea, 12)
+    local objectPoint = bestOfIds(ObjectDB, idList("objectDrops", itemId), player, preferArea, 8)
+    if objectPoint and not npcPoint then return objectPoint end
+    if npcPoint and not objectPoint then return npcPoint end
+    if not objectPoint or not npcPoint then return nil end
+    local objectHome, npcHome = inArea(objectPoint, preferArea), inArea(npcPoint, preferArea)
+    if objectHome ~= npcHome then return objectHome and objectPoint or npcPoint end
+    if objectPoint.score == npcPoint.score then return objectPoint end
+    return objectPoint.score < npcPoint.score and objectPoint or npcPoint
 end
 
 local function norm(text)
