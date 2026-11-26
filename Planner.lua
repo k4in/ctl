@@ -229,27 +229,19 @@ end
 
 function ns.GuideFooter(plan)
     local steps = plan and plan.steps or {}
-    local inLog, included, followups = 0, 0, 0
+    local inLog, included = 0, 0
     for _, quest in ipairs(plan and plan.quests or {}) do
-        if quest.pending then
-            followups = followups + 1
-        else
+        if not quest.pending then
             inLog = inLog + 1
             if quest.included then included = included + 1 end
         end
     end
     local logWord = inLog == 1 and "quest" or "quests"
     local verb = included == 1 and "is" or "are"
-    local follow
-    if followups == 1 then
-        follow = "1 quest in the guide is a follow-up."
-    else
-        follow = tostring(followups) .. " quests in the guide are follow-ups."
-    end
     local summary = string.format(
-        "%s. %d of %d %s in your log %s in the guide. %s",
+        "%s. %d of %d %s in your log %s in the guide.",
         countWord(#steps, "total step", "total steps"),
-        included, inLog, logWord, verb, follow
+        included, inLog, logWord, verb
     )
     local timeText = "Total estimated time to complete: …"
     if not ns.tourPending and ns.travelReady then

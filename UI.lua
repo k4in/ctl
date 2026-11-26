@@ -1042,14 +1042,22 @@ end
 local function fillSteps(steps)
     local list = steps or {}
     local indexes = ns.VisibleStepIndexes and ns.VisibleStepIndexes(list) or {}
-    local count = (#list == 0 or #indexes == 0) and 1 or #indexes
     local current = ns.windowStart or 1
     if type(current) ~= "number" or current < 1 then current = 1 end
     if #list > 0 and current > #list then current = #list end
+    -- The pinned card already shows the current step. The list starts at the next one.
+    local shown = {}
+    local empty = #list == 0 or #indexes == 0
+    if not empty then
+        for _, index in ipairs(indexes) do
+            if index ~= current then shown[#shown + 1] = index end
+        end
+    end
+    local count = empty and 1 or #shown
     local y = 0
     for rowIndex = 1, count do
         local row = ensureStepRow(rowIndex)
-        local index = indexes[rowIndex]
+        local index = shown[rowIndex]
         local stop = index and list[index]
         local here = stop and index == current
         local showSkip = stop and stop.skipped or false
