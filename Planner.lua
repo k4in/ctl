@@ -138,6 +138,8 @@ end
 
 local EXACT_LIMIT = 8
 local IMPROVE_LIMIT = 40
+-- Above this, a full distance matrix no longer fits the search budget.
+local NEIGHBOR_CUTOFF = 32
 local FAR_ZONE = 1000000
 local FAR_WORLD = 100000000
 local UNREACHABLE = 1000000
@@ -268,10 +270,89 @@ function ns.CheapTravel(player, fromStop, toStop)
     return FAR_WORLD
 end
 
+-- Steps worth measuring from `from`. Same zone first, then a couple of entrances
+-- per other zone, then a few more nearby ones. The search falls back to every
+-- step when none of these is allowed yet.
+function ns.TourNeighbors(count, zoneOf, rank)
+    if type(count) ~= "number" or count < 2 or type(zoneOf) ~= "function" or type(rank) ~= "function" then
+        return nil
+    end
+    local neighbors = {}
+    local function build(from)
+        local fromZone = zoneOf(from)
+        local scored = {}
+        for to = 1, count do
+            if to ~= from then
+                local value = rank(from, to)
+                scored[#scored + 1] = {
+                    to = to,
+                    zone = zoneOf(to),
+                    rank = type(value) == "number" and value or 0,
+                }
+            end
+        end
+        table.sort(scored, function(a, b)
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            return a.to < b.to
+        end)
+        local picked, list = {}, {}
+        local function take(to)
+            if to == from or picked[to] then return false end
+            picked[to] = true
+            list[#list + 1] = to
+            return true
+        end
+        local same = 0
+        for _, item in ipairs(scored) do
+            if fromZone ~= nil and item.zone == fromZone and same < 24 and take(item.to) then
+                same = same + 1
+            end
+        end
+        local perZone = {}
+        for _, item in ipairs(scored) do
+            if item.zone ~= fromZone then
+                local used = perZone[item.zone] or 0
+                if used < 2 and take(item.to) then perZone[item.zone] = used + 1 end
+            end
+        end
+        local extra = 0
+        for _, item in ipairs(scored) do
+            if extra >= 6 then break end
+            if take(item.to) then extra = extra + 1 end
+        end
+        neighbors[from] = list
+    end
+    build(0)
+    for index = 1, count do build(index) end
+    return neighbors
+end
+
 -- Open tour. `first` stays at the start when the player pinned a step.
 -- cost(fromIndex, toIndex) uses 0 for the player. ready(index, seen) is precedence.
-function ns.TourOrder(count, cost, ready, first)
+-- options.thorough keeps searching past the first local improvement. A log of
+-- 40-80 steps is the normal case, and a dozen reversals stop well short of a short route.
+function ns.TourOrder(count, cost, ready, first, options)
     if count < 1 then return {} end
+    local thorough = type(options) == "table" and options.thorough or false
+    local neighbors = type(options) == "table" and options.neighbors or nil
+    local group = type(options) == "table" and options.group or nil
+    local member
+    if type(neighbors) == "table" then
+        member = {}
+        for from, list in pairs(neighbors) do
+            if type(list) == "table" then
+                local set = {}
+                for _, to in ipairs(list) do set[to] = true end
+                member[from] = set
+            end
+        end
+    end
+    local function linked(from, to)
+        if not member then return true end
+        local set = member[from]
+        if not set then return true end
+        return set[to] == true
+    end
     local function nearest()
         local order, seen = {}, {}
         local from, start = 0, 1
@@ -280,13 +361,21 @@ function ns.TourOrder(count, cost, ready, first)
         end
         for step = start, count do
             local best, bestCost
-            for to = 1, count do
-                if not seen[to] and ready(to, seen) then
-                    local value = cost(from, to)
-                    if value ~= nil and (not best or value < bestCost or (value == bestCost and to < best)) then
-                        best, bestCost = to, value
-                    end
+            local function consider(to, restricted)
+                if seen[to] or not ready(to, seen) then return end
+                if restricted and not linked(from, to) then return end
+                local value = cost(from, to)
+                if value ~= nil and (not best or value < bestCost or (value == bestCost and to < best)) then
+                    best, bestCost = to, value
                 end
+            end
+            if neighbors and neighbors[from] then
+                for _, to in ipairs(neighbors[from]) do consider(to, true) end
+            else
+                for to = 1, count do consider(to, false) end
+            end
+            if not best and neighbors then
+                for to = 1, count do consider(to, false) end
             end
             if not best then
                 for to = 1, count do
@@ -410,24 +499,325 @@ function ns.TourOrder(count, cost, ready, first)
     end
 
     local order = nearest()
-    if not first and count <= EXACT_LIMIT then order = exact(order) or order end
-    if order and #order <= IMPROVE_LIMIT then
-        local locked = first and 1 or 0
-        local guard = 0
-        while order and guard < 12 do
-            guard = guard + 1
-            local improved = improve(order, locked)
-            if not improved then break end
-            order = improved
-        end
+    if not first and count <= EXACT_LIMIT then
+        order = exact(order) or order
+        -- A handful of steps is already solved. Further passes cannot beat it.
+        if thorough then return order or {} end
     end
-    return order or {}
+    if not thorough then
+        if order and #order <= IMPROVE_LIMIT then
+            local locked = first and 1 or 0
+            local guard = 0
+            while order and guard < 12 do
+                guard = guard + 1
+                local improved = improve(order, locked)
+                if not improved then break end
+                order = improved
+            end
+        end
+        return order or {}
+    end
+
+    -- Relocate keeps a block in its own order, so a quest chain can move
+    -- without turning the chain around. Reversal only tidies a short window.
+    local locked = first and 1 or 0
+    local function breathe()
+        if coroutine.running() then coroutine.yield("pause") end
+    end
+    local function copied(list)
+        local out = {}
+        for index = 1, #list do out[index] = list[index] end
+        return out
+    end
+    local function usable(list)
+        return type(list) == "table" and #list == count and legal(list)
+    end
+    local function keep(best, candidate)
+        if not usable(candidate) then return best end
+        if not best or total(candidate) < total(best) then return copied(candidate) end
+        return best
+    end
+
+    local preds = {}
+    for node = 1, count do
+        local list = {}
+        for other = 1, count do
+            if other ~= node then
+                local seen = {}
+                for at = 1, count do
+                    if at ~= other then seen[at] = true end
+                end
+                if not ready(node, seen) then list[#list + 1] = other end
+            end
+        end
+        preds[node] = list
+    end
+
+    local function insertion()
+        local built, seen, placed = {}, {}, {}
+        local function place(node, at)
+            table.insert(built, at, node)
+            seen[node] = true
+            placed[node] = at
+            for index = at, #built do placed[built[index]] = index end
+        end
+        if first then place(first, 1) end
+        local guard = 0
+        while #built < count and guard <= count do
+            guard = guard + 1
+            local bestNode, bestAt, bestDelta
+            local function try(node, restricted)
+                local earliest = locked + 1
+                for _, pred in ipairs(preds[node]) do
+                    local at = placed[pred]
+                    if at and at + 1 > earliest then earliest = at + 1 end
+                end
+                local found = false
+                for at = earliest, #built + 1 do
+                    local prev = built[at - 1] or 0
+                    local nxt = built[at]
+                    if not restricted or (linked(prev, node) and (not nxt or linked(node, nxt))) then
+                        found = true
+                        local delta = legCost(prev, node)
+                        if nxt then delta = delta + legCost(node, nxt) - legCost(prev, nxt) end
+                        if not bestDelta or delta < bestDelta or (delta == bestDelta and node < bestNode) then
+                            bestNode, bestAt, bestDelta = node, at, delta
+                        end
+                    end
+                end
+                return found
+            end
+            local pending = false
+            for node = 1, count do
+                if not seen[node] and ready(node, seen) then
+                    pending = true
+                    if neighbors and not try(node, true) then try(node, false) end
+                    if not neighbors then try(node, false) end
+                end
+            end
+            if bestNode then
+                place(bestNode, bestAt)
+            elseif pending or guard > 0 then
+                for node = 1, count do
+                    if not seen[node] then
+                        place(node, #built + 1)
+                        break
+                    end
+                end
+            end
+        end
+        if not usable(built) then return nil end
+        return built
+    end
+
+    local function zoneSweep()
+        if type(group) ~= "table" then return nil end
+        local built, seen = {}, {}
+        local from = 0
+        if first then
+            built[1], seen[first], from = first, true, first
+        end
+        local guard = 0
+        while #built < count and guard < count * 2 do
+            guard = guard + 1
+            local pool = {}
+            for node = 1, count do
+                if not seen[node] and ready(node, seen) then pool[#pool + 1] = node end
+            end
+            if #pool == 0 then
+                for node = 1, count do
+                    if not seen[node] then
+                        built[#built + 1] = node
+                        seen[node] = true
+                        from = node
+                        break
+                    end
+                end
+            else
+                local function cheapest(zone, restricted)
+                    local pick, pickCost
+                    for _, node in ipairs(pool) do
+                        if not seen[node] and (zone == nil or group[node] == zone) and ready(node, seen) then
+                            if not restricted or linked(from, node) then
+                                local value = legCost(from, node)
+                                if not pick or value < pickCost or (value == pickCost and node < pick) then
+                                    pick, pickCost = node, value
+                                end
+                            end
+                        end
+                    end
+                    return pick
+                end
+                local door = cheapest(nil, true) or cheapest(nil, false)
+                if not door then break end
+                local zone = group[door]
+                local function take(restricted)
+                    local pick = cheapest(zone, restricted)
+                    if not pick then return false end
+                    built[#built + 1] = pick
+                    seen[pick] = true
+                    from = pick
+                    return true
+                end
+                if not take(true) and not take(false) then
+                    built[#built + 1] = door
+                    seen[door] = true
+                    from = door
+                else
+                    while take(true) or take(false) do end
+                end
+            end
+        end
+        if not usable(built) then return nil end
+        return built
+    end
+
+    local function shortReverse(list)
+        local span = 5
+        local bestGain, bestOrder
+        local base = total(list)
+        for i = locked + 1, #list - 1 do
+            local last = i + span - 1
+            if last > #list then last = #list end
+            for j = i + 1, last do
+                local before, head = list[i - 1] or 0, list[i]
+                local tail, after = list[j], list[j + 1]
+                if (not member or linked(before, tail)) and (not after or not member or linked(head, after)) then
+                    local candidate = copied(list)
+                    for at = i, j do candidate[at] = list[j - (at - i)] end
+                    if legal(candidate) then
+                        local gain = base - total(candidate)
+                        if gain > (bestGain or 0) then bestGain, bestOrder = gain, candidate end
+                    end
+                end
+            end
+        end
+        return bestOrder
+    end
+
+    local function relocate(list)
+        local base = total(list)
+        local bestGain, bestOrder
+        for length = 1, 3 do
+            for i = locked + 1, #list - length + 1 do
+                if i % 12 == 0 then breathe() end
+                local j = i + length - 1
+                local shrunk = {}
+                for index = 1, i - 1 do shrunk[#shrunk + 1] = list[index] end
+                for index = j + 1, #list do shrunk[#shrunk + 1] = list[index] end
+                local head, tail = list[i], list[j]
+                local before = list[i - 1] or 0
+                local after = list[j + 1]
+                for at = locked + 1, #shrunk + 1 do
+                    if at ~= i then
+                        local left = at == 1 and 0 or shrunk[at - 1]
+                        local right = shrunk[at]
+                        local bridge = not after or not member or linked(before, after)
+                        local enter = not member or linked(left, head)
+                        local leave = not right or not member or linked(tail, right)
+                        if bridge and enter and leave then
+                            local candidate = {}
+                            local cursor = 0
+                            for index = 1, at - 1 do
+                                cursor = cursor + 1
+                                candidate[cursor] = shrunk[index]
+                            end
+                            for index = i, j do
+                                cursor = cursor + 1
+                                candidate[cursor] = list[index]
+                            end
+                            for index = at, #shrunk do
+                                cursor = cursor + 1
+                                candidate[cursor] = shrunk[index]
+                            end
+                            if legal(candidate) then
+                                local gain = base - total(candidate)
+                                if gain > (bestGain or 0) then bestGain, bestOrder = gain, candidate end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return bestOrder
+    end
+
+    local function polish(list)
+        local current = copied(list)
+        local moves = 0
+        while current and moves < 28 do
+            breathe()
+            local improved = shortReverse(current) or relocate(current)
+            if not improved then break end
+            current = improved
+            moves = moves + 1
+        end
+        return current
+    end
+
+    local function kick(list, salt)
+        local current = copied(list)
+        local moved = 0
+        local guard = 0
+        while moved < 3 and guard < count * 2 do
+            guard = guard + 1
+            local span = count - locked
+            if span < 1 then break end
+            local pos = locked + 1 + (salt * 13 + guard * 5) % span
+            if pos > count then pos = count end
+            local shrunk = {}
+            for index = 1, count do
+                if index ~= pos then shrunk[#shrunk + 1] = current[index] end
+            end
+            local room = #shrunk - locked
+            if room < 1 then room = 1 end
+            local dest = locked + 1 + (salt * 3 + pos * 7) % room
+            if dest > #shrunk + 1 then dest = #shrunk + 1 end
+            local node = current[pos]
+            local candidate = {}
+            local cursor = 0
+            for index = 1, dest - 1 do
+                cursor = cursor + 1
+                candidate[cursor] = shrunk[index]
+            end
+            cursor = cursor + 1
+            candidate[cursor] = node
+            for index = dest, #shrunk do
+                cursor = cursor + 1
+                candidate[cursor] = shrunk[index]
+            end
+            if usable(candidate) then
+                current = candidate
+                moved = moved + 1
+            end
+        end
+        return current
+    end
+
+    local best = keep(nil, order)
+    breathe()
+    best = keep(best, polish(order))
+    local seeded = insertion()
+    if seeded then best = keep(best, polish(seeded)) end
+    breathe()
+    local swept = zoneSweep()
+    if swept then best = keep(best, polish(swept)) end
+    local idle = 0
+    for salt = 1, 8 do
+        if idle >= 4 then break end
+        breathe()
+        local shaken = polish(kick(best or order, salt))
+        local before = best and total(best) or math.huge
+        best = keep(best, shaken)
+        if best and total(best) < before then idle = 0 else idle = idle + 1 end
+    end
+    return best or order or {}
 end
 
 -- Shortest travel order that still turns a quest in after its objectives and
 -- accepts a follow-up before that follow-up's own steps. Steps without a point
 -- stay attached to their quest and do not pull the tour.
-function ns.OrderStops(stops, _, player, cost, pinKey)
+function ns.OrderStops(stops, _, player, cost, pinKey, thorough)
     player = player or {}
     cost = cost or function(fromStop, toStop)
         return ns.CheapTravel(player, fromStop, toStop)
@@ -509,7 +899,74 @@ function ns.OrderStops(stops, _, player, cost, pinKey)
         return cost(from > 0 and geo[from] or nil, geo[to])
     end
 
-    local indexes = ns.TourOrder(#geo, indexCost, ready, first)
+    local search
+    if thorough and #geo > 1 then
+        local group = {}
+        for index, stop in ipairs(geo) do group[index] = stop.areaId or 0 end
+        local neighbors
+        if #geo > NEIGHBOR_CUTOFF and ns.TourNeighbors then
+            local worlds, ranked = {}, true
+            local function remember(index, spot)
+                if not hasPoint(spot) or type(C_Map) ~= "table" or type(C_Map.GetWorldPosFromMapPos) ~= "function" then
+                    ranked = false
+                    return
+                end
+                if type(CreateVector2D) ~= "function" or type(ns.UiMap) ~= "function" or type(ns.MapFraction) ~= "function" then
+                    ranked = false
+                    return
+                end
+                local map = ns.UiMap(spot.areaId)
+                local x, y = ns.MapFraction(spot.x), ns.MapFraction(spot.y)
+                if type(map) ~= "number" or not x or not y then
+                    ranked = false
+                    return
+                end
+                local ok, continent, world = pcall(C_Map.GetWorldPosFromMapPos, map, CreateVector2D(x, y))
+                if not ok or type(continent) ~= "number" or type(world) ~= "table" or type(world.GetXY) ~= "function" then
+                    ranked = false
+                    return
+                end
+                local wx, wy = world:GetXY()
+                if type(wx) ~= "number" or type(wy) ~= "number" then
+                    ranked = false
+                    return
+                end
+                worlds[index] = { map = continent, x = wx, y = wy }
+            end
+            remember(0, player)
+            for index, stop in ipairs(geo) do
+                if not ranked then break end
+                remember(index, stop)
+            end
+            local function zoneOf(index)
+                if index == 0 then return player and player.areaId or 0 end
+                return group[index]
+            end
+            local function rank(from, to)
+                if ranked then
+                    local left, right = worlds[from], worlds[to]
+                    if left and right and left.map == right.map then
+                        local dx, dy = left.x - right.x, left.y - right.y
+                        return dx * dx + dy * dy
+                    end
+                    return 1e12 + to
+                end
+                local left = from == 0 and player or geo[from]
+                local right = geo[to]
+                if type(left) == "table" and type(right) == "table"
+                    and left.areaId and left.areaId == right.areaId
+                    and type(left.x) == "number" and type(right.x) == "number" then
+                    local dx, dy = left.x - right.x, left.y - right.y
+                    return dx * dx + dy * dy
+                end
+                return FAR_ZONE + (type(right) == "table" and right.areaId or 0) * 1000 + to
+            end
+            neighbors = ns.TourNeighbors(#geo, zoneOf, rank)
+        end
+        search = { thorough = true, group = group, neighbors = neighbors }
+    end
+
+    local indexes = ns.TourOrder(#geo, indexCost, ready, first, search)
     local geoOrder = {}
     for _, index in ipairs(indexes) do geoOrder[#geoOrder + 1] = geo[index] end
 
@@ -867,7 +1324,9 @@ function ns.ApplyTour(plan, ordered, epoch)
     end
 end
 
--- One uncached Shortest Path estimate per frame. The cheap order stays up until this finishes.
+-- A few uncached Shortest Path estimates per frame. One cold estimate is a couple of
+-- milliseconds, so the search stays inside a short frame budget and still finishes
+-- a 40-80 step log in roughly ten to twenty seconds.
 function ns.ScheduleTour(plan, player, pinKey)
     ns.tourEpoch = (ns.tourEpoch or 0) + 1
     local epoch = ns.tourEpoch
@@ -895,10 +1354,19 @@ function ns.ScheduleTour(plan, player, pinKey)
     local ids = {}
     for index, stop in ipairs(steps) do ids[stop] = index end
     local cache = {}
+    -- Past this, new pairs are treated as unreachable so a huge log still returns
+    -- the best complete tour found so far instead of running on.
+    local ASK_CAP = 5000
+    local asked = 0
     local function yieldingCost(fromStop, toStop)
         local key = (fromStop and ids[fromStop] or 0) .. ":" .. (ids[toStop] or 0)
         local cached = cache[key]
         if cached == nil then
+            if asked >= ASK_CAP then
+                cache[key] = UNREACHABLE
+                return UNREACHABLE
+            end
+            asked = asked + 1
             cached = coroutine.yield("need", fromStop, toStop)
             cache[key] = cached
         end
@@ -918,7 +1386,7 @@ function ns.ScheduleTour(plan, player, pinKey)
     local worker = coroutine.create(function()
         local ordered = steps
         if mappable >= 2 then
-            ordered = ns.OrderStops(steps, nil, player, yieldingCost, pinKey)
+            ordered = ns.OrderStops(steps, nil, player, yieldingCost, pinKey, true)
         end
         if type(ordered) ~= "table" then ordered = steps end
         ns.StampTravel(ordered, player, yieldingCost)
@@ -927,38 +1395,54 @@ function ns.ScheduleTour(plan, player, pinKey)
 
     local function step(value)
         if epoch ~= ns.tourEpoch then return end
-        local ok, tag, fromStop, toStop = coroutine.resume(worker, value)
-        if epoch ~= ns.tourEpoch then return end
-        if not ok then
-            ns.tourPending = false
-            ns.travelReady = true
-            if ns.Render then ns.Render(plan, ns.lastErr) end
-            return
-        end
-        if coroutine.status(worker) == "dead" then
-            ns.tourPending = false
-            ns.travelReady = true
-            if type(tag) == "table" then
-                ns.ApplyTour(plan, tag, epoch)
-            elseif ns.Render then
-                ns.Render(plan, ns.lastErr)
-            end
-            return
-        end
-        if tag ~= "need" then
-            C_Timer.After(0, function() step(nil) end)
-            return
-        end
-        local function deliver()
+        local frameStart = type(debugprofilestop) == "function" and debugprofilestop() or nil
+        local asks = 0
+        while epoch == ns.tourEpoch do
+            local ok, tag, fromStop, toStop = coroutine.resume(worker, value)
             if epoch ~= ns.tourEpoch then return end
-            local seconds, reason = ask(fromStop, toStop)
-            if seconds == nil and reason ~= "unreachable" then
-                C_Timer.After(0.25, deliver)
+            if not ok then
+                ns.tourPending = false
+                ns.travelReady = true
+                if ns.Render then ns.Render(plan, ns.lastErr) end
                 return
             end
-            C_Timer.After(0, function() step(seconds or UNREACHABLE) end)
+            if coroutine.status(worker) == "dead" then
+                ns.tourPending = false
+                ns.travelReady = true
+                if type(tag) == "table" then
+                    ns.ApplyTour(plan, tag, epoch)
+                elseif ns.Render then
+                    ns.Render(plan, ns.lastErr)
+                end
+                return
+            end
+            if tag ~= "need" then
+                C_Timer.After(0, function() step(nil) end)
+                return
+            end
+            local seconds, reason = ask(fromStop, toStop)
+            if seconds == nil and reason ~= "unreachable" then
+                local function retry()
+                    if epoch ~= ns.tourEpoch then return end
+                    local again, why = ask(fromStop, toStop)
+                    if again == nil and why ~= "unreachable" then
+                        C_Timer.After(0.25, retry)
+                        return
+                    end
+                    step(again or UNREACHABLE)
+                end
+                C_Timer.After(0.25, retry)
+                return
+            end
+            value = seconds or UNREACHABLE
+            asks = asks + 1
+            local spent = frameStart and (debugprofilestop() - frameStart) or (asks * 3)
+            -- One cold estimate is a few milliseconds. Stop this frame before it adds up.
+            if asks >= 6 or spent >= 8 then
+                C_Timer.After(0, function() step(value) end)
+                return
+            end
         end
-        deliver()
     end
 
     ns.tourPending = true
