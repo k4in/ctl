@@ -29,3 +29,6 @@ dist/
 
 # Local install path, not part of the addon
 .env
+
+# Local review notes, not part of the addon
+findings.md
