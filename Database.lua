@@ -398,22 +398,16 @@ local function bestOfIds(db, ids, player, preferArea, limit)
     return best
 end
 
+-- A collect step is the item, not a creature that happens to drop it. Kill
+-- quests already name their own NPCs. Using drop NPCs here pins the route on
+-- the wrong mob and lets that name steal another objective's progress. A chest
+-- or a node is a place to collect, so those coordinates stay.
 local function itemPoint(itemId, player, preferArea)
     if type(itemId) ~= "number" or itemId == 0 or type(ItemDB) ~= "table" then return nil end
-    local best
-    if type(ItemDB.npcDrops) == "function" then
-        local ok, drops = pcall(ItemDB.npcDrops, itemId)
-        if ok then best = bestOfIds(NpcDB, drops, player, preferArea, 12) end
-    end
-    if type(ItemDB.objectDrops) == "function" then
-        local ok, drops = pcall(ItemDB.objectDrops, itemId)
-        if ok then
-            local objectPoint = bestOfIds(ObjectDB, drops, player, preferArea, 8)
-            if objectPoint and (not best or objectPoint.score < best.score) then best = objectPoint end
-        end
-    end
-    if best and not best.name then best.name = entityName(ItemDB, itemId) end
-    return best
+    if type(ItemDB.objectDrops) ~= "function" then return nil end
+    local ok, drops = pcall(ItemDB.objectDrops, itemId)
+    if not ok then return nil end
+    return bestOfIds(ObjectDB, drops, player, preferArea, 8)
 end
 
 local function norm(text)
@@ -796,9 +790,10 @@ function ns.CollectStops(questId, spec)
         if type(objectives[3]) == "table" then
             for _, entry in ipairs(objectives[3]) do
                 if type(entry) == "table" then
+                    local name = entityName(ItemDB, entry[1])
                     local point = itemPoint(entry[1], player, prefer)
-                    local text = objectiveText(entry, 2, point and point.name or "Item")
-                    pushObjective(text, point, point and point.name, itemIcon(entry[3], entry[1]))
+                    local text = objectiveText(entry, 2, name or "Item")
+                    pushObjective(text, point, name, itemIcon(entry[3], entry[1]))
                 end
             end
         end
@@ -809,7 +804,7 @@ function ns.CollectStops(questId, spec)
                     local point = itemPoint(entry[3], player, prefer)
                     local icon = "interact"
                     if type(entry[3]) == "number" and entry[3] > 0 then icon = itemIcon(nil, entry[3]) end
-                    pushObjective(objectiveText(entry, 2, "Spell target"), point, point and point.name, icon)
+                    pushObjective(objectiveText(entry, 2, "Spell target"), point, nil, icon)
                 end
             end
         end
