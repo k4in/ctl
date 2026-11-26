@@ -11,6 +11,83 @@ function ns.Plain(value)
     return value
 end
 
+local function countNumber(value)
+    value = ns.Plain(value)
+    if type(value) == "number" then return value end
+    if type(value) ~= "string" then return nil end
+    return tonumber(value)
+end
+
+-- Forever writes the live count in front of the objective ("3/10 Boars").
+-- Classic writes it at the end ("Boars: 3/10"). The last fraction is the
+-- progress; an earlier one belongs to the instruction ("Use the 2/2 mixture: 1/5").
+function ns.CountInText(text)
+    text = ns.Plain(text)
+    if type(text) ~= "string" or text == "" then return nil, nil end
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+    local got, need
+    for fulfilled, required in text:gmatch("(%d+)%s*/%s*(%d+)") do
+        got, need = tonumber(fulfilled), tonumber(required)
+    end
+    if not got or not need then return nil, nil end
+    return got, need
+end
+
+-- The number field stays at 0 until the objective finishes. Keep whichever
+-- source is further along, and never let a stale "0/10" replace a higher count.
+function ns.MergeProgress(got, need, ...)
+    if type(got) ~= "number" then got = nil end
+    if type(need) ~= "number" then need = nil end
+    for index = 1, select("#", ...) do
+        local parsedGot, parsedNeed = ns.CountInText(select(index, ...))
+        if parsedGot and (got == nil or parsedGot > got) then
+            got = parsedGot
+            if parsedNeed and parsedNeed > 0 then need = parsedNeed end
+        elseif (need == nil or need < 1) and parsedNeed and parsedNeed > 0 then
+            need = parsedNeed
+        end
+    end
+    return got, need
+end
+
+local function objectiveWords(text)
+    text = ns.Plain(text)
+    if type(text) ~= "string" then return "" end
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+    text = text:lower()
+    text = text:gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("%s*：%s*%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("%s*%(%s*%d+%s*/%s*%d+%s*%)%s*$", "")
+    text = text:gsub("%s+%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("^%s*%d+%s*/%s*%d+%s+", "")
+    text = text:gsub("%s+", " ")
+    return (text:match("^%s*(.-)%s*$")) or ""
+end
+
+local function sameObjective(a, b)
+    local left, right = objectiveWords(a), objectiveWords(b)
+    if left == "" or right == "" then return false end
+    if left == right then return true end
+    if #left >= 6 and #right >= 6 and (left:find(right, 1, true) or right:find(left, 1, true)) then
+        return true
+    end
+    return false
+end
+
+-- Leaderboard text is a second copy of the same row. Ignore it when it belongs
+-- to a different objective, so a wrong log index cannot raise this count.
+local function leaderLine(objIndex, logIndex, objectiveText)
+    if type(GetQuestLogLeaderBoard) ~= "function" then return nil end
+    local ok, text = pcall(GetQuestLogLeaderBoard, objIndex, logIndex)
+    if not ok then return nil end
+    text = ns.Plain(text)
+    if type(text) ~= "string" or text == "" then return nil end
+    if objectiveWords(objectiveText) ~= "" and not sameObjective(objectiveText, text) then
+        return nil
+    end
+    return text
+end
+
 function ns.Band(a, b)
     if type(a) ~= "number" or type(b) ~= "number" then return 0 end
     local result, bitValue, guard = 0, 1, 0
@@ -323,21 +400,22 @@ local function readLog()
                 if C_QuestLog.GetQuestObjectives then
                     local objOk, listed = pcall(C_QuestLog.GetQuestObjectives, questId)
                     if objOk and type(listed) == "table" then
-                        for _, objective in ipairs(listed) do
+                        for objIndex, objective in ipairs(listed) do
                             if type(objective) == "table" then
                                 local text = ns.Plain(objective.text)
                                 local finished = ns.Plain(objective.finished)
                                 if finished == nil then finished = ns.Plain(objective.completed) end
-                                local got = ns.Plain(objective.numFulfilled)
-                                local need = ns.Plain(objective.numRequired)
+                                local got = countNumber(objective.numFulfilled)
+                                local need = countNumber(objective.numRequired)
                                 if text == nil and finished == nil and got == nil and need == nil then
                                     secret = true
                                 else
+                                    got, need = ns.MergeProgress(got, need, text, leaderLine(objIndex, index, text))
                                     objectives[#objectives + 1] = {
                                         text = text,
                                         finished = finished and true or false,
-                                        numFulfilled = type(got) == "number" and got or nil,
-                                        numRequired = type(need) == "number" and need or nil,
+                                        numFulfilled = got,
+                                        numRequired = need,
                                     }
                                 end
                             end

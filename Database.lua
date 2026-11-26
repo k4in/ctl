@@ -500,9 +500,11 @@ function ns.SyncStop(stop, row, inLog)
     if row.complete then return true end
     local line = bestObjective(stop, row)
     if line then
+        local got, need = line.numFulfilled, line.numRequired
+        if ns.MergeProgress then got, need = ns.MergeProgress(got, need, line.text) end
         stop.progressText = line.text
-        stop.numFulfilled = line.numFulfilled
-        stop.numRequired = line.numRequired
+        stop.numFulfilled = got
+        stop.numRequired = need
         stop.objectiveDone = line.finished and true or false
         return line.finished and true or false
     end
@@ -730,9 +732,11 @@ function ns.CollectStops(questId, spec)
 
     local function applyProgress(stop, line)
         if not line then return end
+        local got, need = line.numFulfilled, line.numRequired
+        if ns.MergeProgress then got, need = ns.MergeProgress(got, need, line.text) end
         stop.progressText = line.text
-        stop.numFulfilled = line.numFulfilled
-        stop.numRequired = line.numRequired
+        stop.numFulfilled = got
+        stop.numRequired = need
         stop.objectiveDone = line.finished and true or false
     end
 
@@ -1035,6 +1039,7 @@ local function displayWords(text)
     if type(text) ~= "string" then return "" end
     text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
     text = text:gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")
+    text = text:gsub("%s*：%s*%d+%s*/%s*%d+%s*$", "")
     text = text:gsub("%s*%(%s*%d+%s*/%s*%d+%s*%)%s*$", "")
     text = text:gsub("%s+%d+%s*/%s*%d+%s*$", "")
     text = text:gsub("^%s*%d+%s*/%s*%d+%s+", "")
@@ -1049,6 +1054,15 @@ function ns.ProgressLabel(stop)
     if words == "" then return nil end
     local need = stop.numRequired
     local got = type(stop.numFulfilled) == "number" and stop.numFulfilled or 0
+    if ns.CountInText then
+        local parsedGot, parsedNeed = ns.CountInText(stop.progressText)
+        if type(parsedGot) == "number" and parsedGot > got then
+            got = parsedGot
+            if type(parsedNeed) == "number" and parsedNeed > 0 then need = parsedNeed end
+        elseif (type(need) ~= "number" or need < 1) and type(parsedNeed) == "number" and parsedNeed > 0 then
+            need = parsedNeed
+        end
+    end
     local label
     if type(need) == "number" and need > 1 then
         label = string.format("%d/%d %s", got, need, words)
