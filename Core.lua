@@ -67,7 +67,6 @@ function ns.CharDB()
         return {
             tracked = {}, chain = {}, decided = {},
             ignored = {}, selected = {}, chainOff = {}, chainThrough = {}, skipped = {},
-            refreshAccept = true, refreshTurnin = true, refreshObjective = true,
             autoTrack = true,
             navigating = false, guideShown = false,
         }
@@ -95,9 +94,7 @@ function ns.CharDB()
     if db.navigating ~= true then db.navigating = false end
     db.router = nil
     if db.guideShown ~= true then db.guideShown = false end
-    if db.refreshAccept == nil then db.refreshAccept = true end
-    if db.refreshTurnin == nil then db.refreshTurnin = true end
-    if db.refreshObjective == nil then db.refreshObjective = true end
+    db.refreshAccept, db.refreshTurnin, db.refreshObjective = nil, nil, nil
     if db.autoTrack == nil then db.autoTrack = true end
     if db.autoTurnIn ~= true then db.autoTurnIn = false end
     if db.autoAcceptQuest ~= true then db.autoAcceptQuest = false end
@@ -373,11 +370,16 @@ local function pruneSaved(rows)
     local live = {}
     for _, row in ipairs(rows) do live[row.id] = true end
     local db = ns.CharDB()
+    local function excluded(questId)
+        return db.tracked[questId] == false and db.decided[questId] == true
+    end
     for _, bucket in ipairs({
         db.tracked, db.chain, db.decided, db.ignored, db.selected, db.chainOff, db.chainThrough,
     }) do
         for questId in pairs(bucket) do
-            if not live[questId] then bucket[questId] = nil end
+            -- An explicit exclusion has to survive leaving the log, or the next
+            -- accept looks like a brand-new quest and auto-add puts it back.
+            if not live[questId] and not excluded(questId) then bucket[questId] = nil end
         end
     end
 end

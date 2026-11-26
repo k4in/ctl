@@ -148,6 +148,116 @@ local function hasPoint(stop)
         and type(stop.x) == "number" and type(stop.y) == "number"
 end
 
+-- Flat work on top of travel. Kills, drops, and pickups scale with the
+-- remaining count. Talking and the hand-in are short fixed actions.
+local WORK_SECONDS = {
+    slay = 45,
+    loot = 60,
+    object = 30,
+    chest = 30,
+    node_herb = 30,
+    node_ore = 30,
+    node_fish = 30,
+    talk = 10,
+    interact = 10,
+}
+
+local function remainingUnits(stop)
+    local need = stop.numRequired
+    if type(need) ~= "number" or need < 1 then return 1 end
+    local got = type(stop.numFulfilled) == "number" and stop.numFulfilled or 0
+    local left = need - got
+    if left < 0 then return 0 end
+    return left
+end
+
+function ns.WorkSeconds(stop)
+    if type(stop) ~= "table" or stop.skipped then return 0 end
+    if stop.kind == "accept" or stop.kind == "turnin" then return 15 end
+    if stop.kind ~= "objective" then return 0 end
+    local each = WORK_SECONDS[stop.icon]
+    if not each then return 0 end
+    return each * remainingUnits(stop)
+end
+
+function ns.FormatDuration(seconds)
+    if type(seconds) ~= "number" or seconds ~= seconds or seconds <= 0 then return "0m" end
+    local minutes = math.ceil(seconds / 60)
+    local days = math.floor(minutes / 1440)
+    minutes = minutes - days * 1440
+    local hours = math.floor(minutes / 60)
+    minutes = minutes - hours * 60
+    if days > 0 then return string.format("%dd %dh %dm", days, hours, minutes) end
+    if hours > 0 then return string.format("%dh %dm", hours, minutes) end
+    return string.format("%dm", minutes)
+end
+
+function ns.TotalSeconds(steps)
+    local total = 0
+    if type(steps) ~= "table" then return 0 end
+    for _, stop in ipairs(steps) do
+        if not stop.skipped then
+            total = total + ns.WorkSeconds(stop)
+            local leg = stop.travelSeconds
+            if type(leg) == "number" and leg >= 0 and leg < UNREACHABLE then
+                total = total + leg
+            end
+        end
+    end
+    return total
+end
+
+function ns.StampTravel(steps, player, cost)
+    if type(steps) ~= "table" or type(cost) ~= "function" then return end
+    local previous
+    for _, stop in ipairs(steps) do
+        stop.travelSeconds = nil
+        if not stop.skipped and hasPoint(stop) then
+            local seconds = cost(previous, stop)
+            if type(seconds) == "number" and seconds >= 0 and seconds < UNREACHABLE then
+                stop.travelSeconds = seconds
+            end
+            previous = stop
+        end
+    end
+end
+
+local function countWord(count, one, many)
+    if count == 1 then return "1 " .. one end
+    return tostring(count) .. " " .. many
+end
+
+function ns.GuideFooter(plan)
+    local steps = plan and plan.steps or {}
+    local inLog, included, followups = 0, 0, 0
+    for _, quest in ipairs(plan and plan.quests or {}) do
+        if quest.pending then
+            followups = followups + 1
+        else
+            inLog = inLog + 1
+            if quest.included then included = included + 1 end
+        end
+    end
+    local logWord = inLog == 1 and "quest" or "quests"
+    local verb = included == 1 and "is" or "are"
+    local follow
+    if followups == 1 then
+        follow = "1 quest in the guide is a follow-up."
+    else
+        follow = tostring(followups) .. " quests in the guide are follow-ups."
+    end
+    local summary = string.format(
+        "%s. %d of %d %s in your log %s in the guide. %s",
+        countWord(#steps, "total step", "total steps"),
+        included, inLog, logWord, verb, follow
+    )
+    local timeText = "Total estimated time to complete: …"
+    if not ns.tourPending and ns.travelReady then
+        timeText = "Total estimated time to complete: " .. ns.FormatDuration(ns.TotalSeconds(steps))
+    end
+    return summary, timeText
+end
+
 -- Same zone uses the straight line. Another zone is only a stand-in until
 -- Shortest Path reports a travel time. Coordinates do not cross zone borders.
 function ns.CheapTravel(player, fromStop, toStop)
@@ -733,6 +843,7 @@ function ns.CancelTour()
     if not ns.tourPending then return end
     ns.tourEpoch = (ns.tourEpoch or 0) + 1
     ns.tourPending = false
+    ns.travelReady = true
 end
 
 function ns.ApplyTour(plan, ordered, epoch)
@@ -756,6 +867,7 @@ function ns.ApplyTour(plan, ordered, epoch)
     if #plan.steps > 0 and start > #plan.steps then start = #plan.steps end
     ns.windowStart = start
     ns.tourPending = false
+    ns.travelReady = true
     if ns.Render then ns.Render(plan, ns.lastErr) end
     local db = ns.CharDB and ns.CharDB() or nil
     if db and db.navigating == true and ns.PushRoute then
@@ -768,15 +880,25 @@ function ns.ScheduleTour(plan, player, pinKey)
     ns.tourEpoch = (ns.tourEpoch or 0) + 1
     local epoch = ns.tourEpoch
     ns.tourPending = false
+    ns.travelReady = false
     local api = estimateApi()
     local steps = plan and plan.steps
-    if not api or type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then return end
-    if type(steps) ~= "table" then return end
+    if not api or type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then
+        ns.travelReady = true
+        return
+    end
+    if type(steps) ~= "table" then
+        ns.travelReady = true
+        return
+    end
     local mappable = 0
     for _, stop in ipairs(steps) do
         if travelPoint(stop) then mappable = mappable + 1 end
     end
-    if mappable < 2 then return end
+    if mappable < 1 then
+        ns.travelReady = true
+        return
+    end
 
     local ids = {}
     for index, stop in ipairs(steps) do ids[stop] = index end
@@ -802,7 +924,13 @@ function ns.ScheduleTour(plan, player, pinKey)
     end
 
     local worker = coroutine.create(function()
-        return ns.OrderStops(steps, nil, player, yieldingCost, pinKey)
+        local ordered = steps
+        if mappable >= 2 then
+            ordered = ns.OrderStops(steps, nil, player, yieldingCost, pinKey)
+        end
+        if type(ordered) ~= "table" then ordered = steps end
+        ns.StampTravel(ordered, player, yieldingCost)
+        return ordered
     end)
 
     local function step(value)
@@ -811,11 +939,13 @@ function ns.ScheduleTour(plan, player, pinKey)
         if epoch ~= ns.tourEpoch then return end
         if not ok then
             ns.tourPending = false
+            ns.travelReady = true
             if ns.Render then ns.Render(plan, ns.lastErr) end
             return
         end
         if coroutine.status(worker) == "dead" then
             ns.tourPending = false
+            ns.travelReady = true
             if type(tag) == "table" then
                 ns.ApplyTour(plan, tag, epoch)
             elseif ns.Render then

@@ -404,8 +404,10 @@ end
 
 guide.subtitle:SetPoint("RIGHT", navButton, "LEFT", -8, 0)
 
-local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 68)
+local stepScroll = scroller(guide, "ClearTheLogStepScroll", 16, -48, -34, 108)
 local stepRows = {}
+local currentCard
+local listAnchorTop
 
 local calcBar = CreateFrame("Frame", nil, guide)
 calcBar:SetHeight(22)
@@ -436,9 +438,21 @@ calcBar:SetScript("OnUpdate", function(_, elapsed)
 end)
 
 local function placeStepList(busy)
+    local cardH = 0
+    if currentCard and currentCard:IsShown() then cardH = currentCard:GetHeight() or 0 end
+    local top = busy and -74 or -48
+    if cardH > 0 then top = top - cardH - 6 end
+    if currentCard then
+        currentCard:ClearAllPoints()
+        local cardY = busy and -74 or -48
+        currentCard:SetPoint("TOPLEFT", guide, "TOPLEFT", 16, cardY)
+        currentCard:SetPoint("TOPRIGHT", guide, "TOPRIGHT", -34, cardY)
+    end
+    if top == listAnchorTop then return end
+    listAnchorTop = top
     stepScroll:ClearAllPoints()
-    stepScroll:SetPoint("TOPLEFT", 16, busy and -72 or -48)
-    stepScroll:SetPoint("BOTTOMRIGHT", -34, 68)
+    stepScroll:SetPoint("TOPLEFT", 16, top)
+    stepScroll:SetPoint("BOTTOMRIGHT", -34, 108)
 end
 
 local function paintCalculating()
@@ -458,19 +472,22 @@ local function paintCalculating()
 end
 
 local summary = guide:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-summary:SetPoint("BOTTOMLEFT", 24, 50)
+summary:SetPoint("BOTTOMLEFT", 24, 46)
 summary:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
 summary:SetJustifyH("LEFT")
-clip(summary)
+summary:SetJustifyV("BOTTOM")
+summary:SetWordWrap(true)
+if summary.SetMaxLines then summary:SetMaxLines(3) end
 
-local routeLine = guide:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-routeLine:SetPoint("BOTTOMLEFT", 24, 34)
-routeLine:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
-routeLine:SetJustifyH("LEFT")
-clip(routeLine)
+local timeLine = guide:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+timeLine:SetPoint("BOTTOMLEFT", 24, 28)
+timeLine:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
+timeLine:SetJustifyH("LEFT")
+timeLine:SetTextColor(1, 0.82, 0.45)
+clip(timeLine)
 
 local warning = guide:CreateFontString(nil, "ARTWORK", "GameFontRedSmall")
-warning:SetPoint("BOTTOMLEFT", 24, 18)
+warning:SetPoint("BOTTOMLEFT", 24, 12)
 warning:SetPoint("RIGHT", guide, "RIGHT", -28, 0)
 warning:SetJustifyH("LEFT")
 clip(warning)
@@ -596,20 +613,12 @@ local function stepRow(parent)
     row.action = CreateFrame("Button", nil, row)
     row.action:SetSize(22, 22)
     row.action:SetPoint("RIGHT", -8, 0)
-    row.action:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row.action:RegisterForClicks("LeftButtonUp")
     row.action:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
     paintSkipIcon(row.action, false)
     row.action:Hide()
-    row.action:SetScript("OnClick", function(_, mouseButton)
+    row.action:SetScript("OnClick", function()
         if silent or not row.index or not row.stop then return end
-        if mouseButton == "LeftButton" and IsShiftKeyDown and IsShiftKeyDown() then
-            if ns.RecalculateFromStep then ns.RecalculateFromStep(row.index) end
-            return
-        end
-        if mouseButton == "RightButton" then
-            if ns.SkipStep then ns.SkipStep(row.index) end
-            return
-        end
         if row.stop.skipped then
             if ns.UndoSkip then ns.UndoSkip(row.index) end
         elseif ns.SkipStep then
@@ -623,7 +632,7 @@ local function stepRow(parent)
             GameTooltip:AddLine("Clears the skip and recalculates the plan from your current location.", 1, 1, 1, true)
         else
             GameTooltip:SetText("Skip", 1, 0.82, 0)
-            GameTooltip:AddLine("Moves this step to the end of the plan.", 1, 1, 1, true)
+            GameTooltip:AddLine("Rebuilds the guide from your current location. This step stays at the end.", 1, 1, 1, true)
         end
         GameTooltip:Show()
     end)
@@ -708,7 +717,6 @@ local function stepRow(parent)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Left click opens the quest in the quest log.", 0.7, 0.7, 0.7, true)
         GameTooltip:AddLine("Shift+Left click recalculates the guide with this step as the start.", 0.7, 0.7, 0.7, true)
-        GameTooltip:AddLine("Right click skips this step.", 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function()
@@ -717,10 +725,6 @@ local function stepRow(parent)
     end)
     row:SetScript("OnMouseUp", function(_, button)
         if silent or not row.index or not row.stop then return end
-        if button == "RightButton" then
-            if ns.SkipStep then ns.SkipStep(row.index) end
-            return
-        end
         if button ~= "LeftButton" then return end
         if IsShiftKeyDown and IsShiftKeyDown() then
             if ns.RecalculateFromStep then ns.RecalculateFromStep(row.index) end
@@ -899,6 +903,142 @@ local function paintMark(row, stop, here)
     return true
 end
 
+currentCard = CreateFrame("Frame", nil, guide)
+currentCard:SetHeight(124)
+currentCard:SetFrameLevel((guide:GetFrameLevel() or 0) + 5)
+currentCard:EnableMouse(true)
+currentCard:Hide()
+local cardBack = currentCard:CreateTexture(nil, "BACKGROUND")
+cardBack:SetAllPoints()
+cardBack:SetColorTexture(0.95, 0.78, 0.25, 0.16)
+local cardEdge = currentCard:CreateTexture(nil, "ARTWORK")
+cardEdge:SetPoint("TOPLEFT", 0, 0)
+cardEdge:SetPoint("BOTTOMLEFT", 0, 0)
+cardEdge:SetWidth(4)
+cardEdge:SetColorTexture(1, 0.82, 0, 1)
+currentCard.badge = CreateFrame("Frame", nil, currentCard)
+currentCard.badge:SetSize(22, 22)
+currentCard.badge:SetPoint("TOPLEFT", 10, -30)
+currentCard.mark = currentCard.badge:CreateTexture(nil, "ARTWORK")
+currentCard.mark:SetAllPoints()
+currentCard.badge:Hide()
+currentCard.header = currentCard:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+currentCard.header:SetPoint("TOPLEFT", 40, -8)
+currentCard.header:SetText("CURRENT STEP")
+currentCard.line = currentCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+currentCard.line:SetPoint("TOPLEFT", 40, -28)
+currentCard.line:SetPoint("RIGHT", currentCard, "RIGHT", -36, 0)
+clip(currentCard.line)
+currentCard.sub = currentCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+currentCard.sub:Hide()
+currentCard.details = {}
+for index = 1, 6 do
+    local line = currentCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    line:SetJustifyH("LEFT")
+    line:SetWordWrap(false)
+    if line.SetMaxLines then line:SetMaxLines(1) end
+    line:Hide()
+    currentCard.details[index] = line
+end
+currentCard.action = CreateFrame("Button", nil, currentCard)
+currentCard.action:SetSize(22, 22)
+currentCard.action:SetPoint("TOPRIGHT", -8, -8)
+currentCard.action:RegisterForClicks("LeftButtonUp")
+currentCard.action:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+paintSkipIcon(currentCard.action, false)
+currentCard.action:SetScript("OnClick", function()
+    if silent or not currentCard.index or not currentCard.stop then return end
+    if currentCard.stop.skipped then
+        if ns.UndoSkip then ns.UndoSkip(currentCard.index) end
+    elseif ns.SkipStep then
+        ns.SkipStep(currentCard.index)
+    end
+end)
+currentCard.action:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if currentCard.stop and currentCard.stop.skipped then
+        GameTooltip:SetText("Undo", 1, 0.82, 0)
+        GameTooltip:AddLine("Clears the skip and recalculates the plan from your current location.", 1, 1, 1, true)
+    else
+        GameTooltip:SetText("Skip", 1, 0.82, 0)
+        GameTooltip:AddLine("Rebuilds the guide from your current location. This step stays at the end.", 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+end)
+currentCard.action:SetScript("OnLeave", function() GameTooltip:Hide() end)
+currentCard.drop = CreateFrame("Button", nil, currentCard)
+currentCard.drop:SetSize(22, 22)
+currentCard.drop:SetPoint("RIGHT", currentCard.action, "LEFT", -4, 0)
+currentCard.drop:RegisterForClicks("LeftButtonUp")
+currentCard.drop:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+currentCard.drop.label = currentCard.drop:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+currentCard.drop.label:SetPoint("CENTER", 1, 0)
+currentCard.drop.label:SetText("x")
+currentCard.drop.label:SetTextColor(1, 0.25, 0.25)
+currentCard.drop:Hide()
+currentCard.drop:SetScript("OnClick", function()
+    if silent or not currentCard.stop or type(ns.DropQuestLine) ~= "function" then return end
+    local stop = currentCard.stop
+    local questId = stop.questId
+    if stop.awaitAccept and type(stop.acceptId) == "number" and stop.acceptId > 0 then
+        questId = stop.acceptId
+    end
+    if type(questId) == "number" and questId > 0 then ns.DropQuestLine(questId) end
+end)
+currentCard.drop:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Remove", 1, 0.82, 0)
+    GameTooltip:AddLine("Removes this quest chain from the guide and the quest list.", 1, 1, 1, true)
+    GameTooltip:Show()
+end)
+currentCard.drop:SetScript("OnLeave", function() GameTooltip:Hide() end)
+currentCard:SetScript("OnEnter", function()
+    local stop = currentCard.stop
+    if not stop then return end
+    GameTooltip:SetOwner(currentCard, "ANCHOR_RIGHT")
+    GameTooltip:SetText(stop.questName or "Step", 1, 0.82, 0)
+    GameTooltip:AddLine("Left click opens the quest in the quest log.", 0.7, 0.7, 0.7, true)
+    GameTooltip:AddLine("Shift+Left click recalculates the guide with this step as the start.", 0.7, 0.7, 0.7, true)
+    GameTooltip:Show()
+end)
+currentCard:SetScript("OnLeave", function() GameTooltip:Hide() end)
+currentCard:SetScript("OnMouseUp", function(_, button)
+    if silent or not currentCard.stop or button ~= "LeftButton" then return end
+    if IsShiftKeyDown and IsShiftKeyDown() then
+        if ns.RecalculateFromStep then ns.RecalculateFromStep(currentCard.index) end
+        return
+    end
+    if ns.OpenQuestLog then ns.OpenQuestLog(currentCard.stop.questId) end
+end)
+
+local function paintCurrentCard(stop, index)
+    if not stop then
+        currentCard.stop = nil
+        currentCard.index = nil
+        currentCard:Hide()
+        return
+    end
+    currentCard.stop = stop
+    currentCard.index = index
+    currentCard:Show()
+    local showDrop = waitingToAccept(stop)
+    local inset = showDrop and 64 or 36
+    local marked = paintMark(currentCard, stop, true)
+    local textLeft = marked and 40 or 12
+    currentCard.header:ClearAllPoints()
+    currentCard.header:SetPoint("TOPLEFT", textLeft, -8)
+    anchorLine(currentCard, -28, inset, true, textLeft)
+    local tag, label = stepCaption(stop, true)
+    local dungeon = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
+    currentCard.line:SetText(dungeon .. tag .. ": " .. label)
+    currentCard.line:SetTextColor(1, 0.86, 0.35)
+    local height = showCurrent(currentCard, currentDetails(stop), inset, textLeft)
+    currentCard:SetHeight(height)
+    paintSkipIcon(currentCard.action, stop.skipped and true or false)
+    currentCard.action:Show()
+    if showDrop then currentCard.drop:Show() else currentCard.drop:Hide() end
+end
+
 local function fillSteps(steps)
     local list = steps or {}
     local indexes = ns.VisibleStepIndexes and ns.VisibleStepIndexes(list) or {}
@@ -912,59 +1052,39 @@ local function fillSteps(steps)
         local index = indexes[rowIndex]
         local stop = index and list[index]
         local here = stop and index == current
-        local showIcon = stop and (here or stop.skipped) or false
-        local showDrop = here and stop and waitingToAccept(stop) or false
-        local inset = showDrop and 64 or (showIcon and 36 or 10)
+        local showSkip = stop and stop.skipped or false
+        local inset = showSkip and 36 or 10
         row.index = stop and index or nil
         row.stop = stop
         row.hover:Hide()
         row.current:SetShown(here and true or false)
         row.edge:SetShown(here and true or false)
         row.action:ClearAllPoints()
-        if here then
-            row.action:SetPoint("TOPRIGHT", -8, -28)
-        else
-            row.action:SetPoint("RIGHT", -8, 0)
-        end
-        if showIcon then
-            paintSkipIcon(row.action, stop.skipped and true or false)
+        row.action:SetPoint("RIGHT", -8, 0)
+        if showSkip then
+            paintSkipIcon(row.action, true)
             row.action:Show()
         else
             row.action:Hide()
         end
-        if showDrop then
-            row.drop:Show()
-        else
-            row.drop:Hide()
-        end
+        row.drop:Hide()
 
-        local height = ROW_STEP
-        local marked = paintMark(row, stop, here)
-        local textLeft = marked and (here and 40 or 32) or 12
+        local marked = paintMark(row, stop, false)
+        local textLeft = marked and 32 or 12
+        hideDetails(row)
+        row.sub:Show()
+        anchorLine(row, not stop and -12 or -4, inset, false, textLeft)
         if not stop then
-            hideDetails(row)
-            row.sub:Show()
             row.sub:SetText("")
-            anchorLine(row, -12, 10, false, textLeft)
             row.line:SetText("No steps. The log is empty, or no quest is in the guide.")
             row.line:SetTextColor(0.7, 0.7, 0.7)
-        elseif here then
-            row.header:ClearAllPoints()
-            row.header:SetPoint("TOPLEFT", textLeft, -8)
-            anchorLine(row, -28, inset, true, textLeft)
-            local tag, label = stepCaption(stop, true)
-            local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
-            row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
-            row.line:SetTextColor(1, 0.86, 0.35)
-            height = showCurrent(row, currentDetails(stop), inset, textLeft)
         else
-            hideDetails(row)
-            row.sub:Show()
-            anchorLine(row, -4, inset, false, textLeft)
             local tag, label = stepCaption(stop, false)
             local mark = stop.dungeon and (DUNGEON_CODE .. "D|r  ") or ""
             row.line:SetText(string.format("%d.  %s%s: %s", index, mark, tag, label))
-            if stop.skipped then
+            if here then
+                row.line:SetTextColor(1, 0.86, 0.35)
+            elseif stop.skipped then
                 row.line:SetTextColor(0.55, 0.55, 0.55)
             elseif stop.followup then
                 row.line:SetTextColor(0.95, 0.8, 0.45)
@@ -976,47 +1096,41 @@ local function fillSteps(steps)
             local bits = {}
             local place = locationText(stop.areaId, stop.x, stop.y)
             if place then bits[#bits + 1] = place end
-            if stop.questName and stop.questName ~= "" then bits[#bits + 1] = stop.questName end
+            if stop.questName and stop.questName ~= "" and stop.kind == "objective" then
+                bits[#bits + 1] = stop.questName
+            end
             if stop.note and stop.note ~= "" then bits[#bits + 1] = stop.note end
             if stop.skipped then bits[#bits + 1] = "skipped" end
             if ns.DBReady and ns.DBReady() and not ns.HasMapPoint(stop) then
                 bits[#bits + 1] = "no map"
             end
+            local progress = ns.ProgressLabel and ns.ProgressLabel(stop)
+            if progress then bits[#bits + 1] = progress end
             row.sub:ClearAllPoints()
             row.sub:SetPoint("TOPLEFT", marked and textLeft or 24, -22)
             row.sub:SetPoint("RIGHT", row, "RIGHT", -inset, 0)
             row.sub:SetText(table.concat(bits, "   ·   "))
             if stop.skipped then
                 row.sub:SetTextColor(0.45, 0.45, 0.45)
+            elseif here then
+                row.sub:SetTextColor(0.9, 0.8, 0.45)
             else
                 row.sub:SetTextColor(0.65, 0.65, 0.65)
             end
         end
 
         row:ClearAllPoints()
-        row:SetHeight(height)
+        row:SetHeight(ROW_STEP)
         row:SetPoint("TOPLEFT", stepScroll.child, "TOPLEFT", 0, -y)
         row:SetPoint("TOPRIGHT", stepScroll.child, "TOPRIGHT", 0, -y)
         row:Show()
-        y = y + height
+        y = y + ROW_STEP
     end
     for index = count + 1, #stepRows do stepRows[index]:Hide() end
     fit(stepScroll, math.max(y, 1))
+    paintCurrentCard(#list > 0 and list[current] or nil, current)
+    placeStepList(ns.tourPending and true or false)
     return #indexes
-end
-
-local function routeSentence()
-    local db = ns.ready and ns.CharDB() or {}
-    if db.navigating ~= true then
-        return "Navigation is off.", false
-    end
-    if ns.routeStatus and ns.routeStatus ~= "" then
-        return ns.routeStatus, ns.routeStatusError and true or false
-    end
-    if ns.SpfReady and not ns.SpfReady() then
-        return "Shortest Path Forever is not loaded.", true
-    end
-    return "Waypoints update when the current step is finished.", false
 end
 
 function ns.RenderGuide(plan, err)
@@ -1026,27 +1140,18 @@ function ns.RenderGuide(plan, err)
     if not plan then
         fillSteps(nil)
         summary:SetText("")
-        routeLine:SetText("")
+        timeLine:SetText("")
         warning:SetText(err or "")
         silent = false
         return
     end
-    local shown = fillSteps(plan.steps)
-    local included = 0
-    for _, quest in ipairs(plan.quests or {}) do
-        if quest.included then included = included + 1 end
+    fillSteps(plan.steps)
+    local footer, estimate = "", ""
+    if ns.GuideFooter then
+        footer, estimate = ns.GuideFooter(plan)
     end
-    summary:SetText(string.format(
-        "%d of %d steps · %d of %d quests in the guide",
-        shown, #(plan.steps or {}), included, #(plan.quests or {})
-    ))
-    local text, bad = routeSentence()
-    routeLine:SetText(text or "")
-    if bad then
-        routeLine:SetTextColor(1, 0.35, 0.35)
-    else
-        routeLine:SetTextColor(0.5, 0.5, 0.5)
-    end
+    summary:SetText(footer or "")
+    timeLine:SetText(estimate or "")
     warning:SetText(plan.warning or err or "")
     silent = false
 end
