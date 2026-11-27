@@ -212,21 +212,42 @@ local function onAutocomplete(questId)
     if index and ShowQuestComplete then call(ShowQuestComplete, index) end
 end
 
+-- The gossip and quest frames need a moment before a click lands.
+local AUTO_DELAY = 0.25
+local waiting
+
+local function later(action)
+    if waiting then return end
+    waiting = true
+    local function run()
+        waiting = false
+        action()
+    end
+    if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+        C_Timer.After(AUTO_DELAY, run)
+        return
+    end
+    run()
+end
+
 local frame = CreateFrame("Frame")
 frame:SetScript("OnEvent", function(_, event, arg1)
-    if event == "GOSSIP_SHOW" then
-        onGossip()
-    elseif event == "QUEST_GREETING" then
-        onGreeting()
-    elseif event == "QUEST_DETAIL" then
-        acceptDetail()
-    elseif event == "QUEST_PROGRESS" then
-        completeIfReady()
-    elseif event == "QUEST_COMPLETE" then
-        takeReward()
-    elseif event == "QUEST_AUTOCOMPLETE" then
-        onAutocomplete(arg1)
-    end
+    if not (autoTurnIn() or autoAccept()) then return end
+    later(function()
+        if event == "GOSSIP_SHOW" then
+            onGossip()
+        elseif event == "QUEST_GREETING" then
+            onGreeting()
+        elseif event == "QUEST_DETAIL" then
+            acceptDetail()
+        elseif event == "QUEST_PROGRESS" then
+            completeIfReady()
+        elseif event == "QUEST_COMPLETE" then
+            takeReward()
+        elseif event == "QUEST_AUTOCOMPLETE" then
+            onAutocomplete(arg1)
+        end
+    end)
 end)
 frame:RegisterEvent("GOSSIP_SHOW")
 frame:RegisterEvent("QUEST_GREETING")

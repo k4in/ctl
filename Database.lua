@@ -405,6 +405,41 @@ local function idList(field, itemId)
     return drops
 end
 
+-- Questie's resolved percent for one mob, the same number its tooltip shows.
+-- Nil when Questie is not loaded or has no rate for that pair.
+function ns.QuestieDropRate(itemId, npcId)
+    if type(itemId) ~= "number" or itemId <= 0 then return nil end
+    if type(npcId) ~= "number" or npcId <= 0 then return nil end
+    local loader = QuestieLoader
+    if type(loader) ~= "table" or type(loader.ImportModule) ~= "function" then return nil end
+    local ok, db = pcall(loader.ImportModule, loader, "QuestieDB")
+    if not ok or type(db) ~= "table" or type(db.GetItemDroprate) ~= "function" then return nil end
+    local found, data = pcall(db.GetItemDroprate, itemId, npcId)
+    if not found or type(data) ~= "table" then return nil end
+    local rate = data[1]
+    if type(rate) ~= "number" or rate <= 0 then return nil end
+    return rate
+end
+
+-- Mean percent across every mob Questie lists for the item. Mobs with no
+-- rate are left out. Nil when none of them have one.
+function ns.AverageDropRate(itemId)
+    local drops = idList("npcDrops", itemId)
+    if not drops then return nil end
+    local sum, count = 0, 0
+    for _, npcId in ipairs(drops) do
+        if type(npcId) == "number" and npcId > 0 then
+            local rate = ns.QuestieDropRate(itemId, npcId)
+            if type(rate) == "number" and rate > 0 then
+                sum = sum + rate
+                count = count + 1
+            end
+        end
+    end
+    if count == 0 then return nil end
+    return sum / count
+end
+
 local function inArea(point, areaId)
     return type(point) == "table" and type(areaId) == "number" and areaId > 0 and point.areaId == areaId
 end
@@ -750,7 +785,7 @@ function ns.CollectStops(questId, spec)
         stop.objectiveDone = line.finished and true or false
     end
 
-    local function pushObjective(text, point, sourceName, icon)
+    local function pushObjective(text, point, sourceName, icon, itemId)
         if spec.complete then return end
         local key = norm(text)
         if key ~= "" and seen[key] then return end
@@ -772,6 +807,7 @@ function ns.CollectStops(questId, spec)
             afterTurnin = spec.afterTurnin,
             sourceName = sourceName,
             icon = icon or "event",
+            itemId = type(itemId) == "number" and itemId > 0 and itemId or nil,
             unmatched = line == nil,
         }
         applyProgress(stop, line)
@@ -809,7 +845,7 @@ function ns.CollectStops(questId, spec)
                     local name = entityName(ItemDB, entry[1])
                     local point = itemPoint(entry[1], player, prefer)
                     local text = objectiveText(entry, 2, name or "Item")
-                    pushObjective(text, point, name, itemIcon(entry[3], entry[1]))
+                    pushObjective(text, point, name, itemIcon(entry[3], entry[1]), entry[1])
                 end
             end
         end

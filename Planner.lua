@@ -150,8 +150,11 @@ local function hasPoint(stop)
         and type(stop.x) == "number" and type(stop.y) == "number"
 end
 
--- Flat work on top of travel. Kills, drops, and pickups scale with the
--- remaining count. Talking and the hand-in are short fixed actions.
+-- Flat work on top of travel. Kills, pickups, and talking scale with the
+-- remaining count. A mob drop uses the average Questie drop rate, so the
+-- expected kills are the remaining items divided by that rate, at the kill
+-- time. 8 items at 50% is 16 kills. No rate keeps the flat loot time.
+-- Accept and turn-in are short fixed actions.
 local WORK_SECONDS = {
     slay = 45,
     loot = 60,
@@ -177,9 +180,16 @@ function ns.WorkSeconds(stop)
     if type(stop) ~= "table" or stop.skipped then return 0 end
     if stop.kind == "accept" or stop.kind == "turnin" then return 15 end
     if stop.kind ~= "objective" then return 0 end
+    local units = remainingUnits(stop)
+    if stop.icon == "loot" and type(ns.AverageDropRate) == "function" then
+        local rate = ns.AverageDropRate(stop.itemId)
+        if type(rate) == "number" and rate > 0 then
+            return WORK_SECONDS.slay * units * (100 / rate)
+        end
+    end
     local each = WORK_SECONDS[stop.icon]
     if not each then return 0 end
-    return each * remainingUnits(stop)
+    return each * units
 end
 
 function ns.FormatDuration(seconds)
