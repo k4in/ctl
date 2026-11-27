@@ -1009,6 +1009,99 @@ function ns.OrderStops(stops, _, player, cost, pinKey, thorough)
     return result
 end
 
+-- For one fixed step order, pick each objective's camp so the travel sum is
+-- smallest. The incoming and outgoing leg both count, so a farther camp can
+-- win when it sits on the way. A pinned step keeps the point it was pinned on.
+-- Returns true when a step moved.
+function ns.ChoosePlaces(steps, player, cost, pinKey)
+    if type(steps) ~= "table" or type(cost) ~= "function" then return false end
+    local pending = false
+    for _, stop in ipairs(steps) do
+        if not stop.skipped and type(stop.places) == "table" and #stop.places >= 2 then
+            if not (type(pinKey) == "string" and ns.StepKey(stop) == pinKey) then
+                pending = true
+                break
+            end
+        end
+    end
+    if not pending then return false end
+
+    -- Every mapped step is a link. A camp choice changes the next leg, so the
+    -- score is the whole chain, not the distance from the player.
+    local chain = {}
+    for _, stop in ipairs(steps) do
+        if not stop.skipped and hasPoint(stop) then chain[#chain + 1] = stop end
+    end
+    if #chain == 0 then return false end
+
+    local options = {}
+    for index, stop in ipairs(chain) do
+        local pinned = type(pinKey) == "string" and ns.StepKey(stop) == pinKey
+        local list = stop.places
+        if pinned or type(list) ~= "table" or #list < 2 then
+            options[index] = { { areaId = stop.areaId, x = stop.x, y = stop.y } }
+        else
+            options[index] = list
+        end
+    end
+
+    local huge = 1e15
+    local function leg(fromSpot, toSpot)
+        local value = cost(fromSpot, toSpot)
+        if type(value) ~= "number" then return huge end
+        return value
+    end
+
+    local current, previous = 0, nil
+    for _, stop in ipairs(chain) do
+        current = current + leg(previous, stop)
+        previous = stop
+    end
+
+    local bestCost, cameFrom = {}, {}
+    for index = 1, #chain do
+        bestCost[index] = {}
+        cameFrom[index] = {}
+        local places = options[index]
+        for placeIndex = 1, #places do
+            local best, fromIndex = huge, nil
+            if index == 1 then
+                best = leg(nil, places[placeIndex])
+            else
+                local previousPlaces = options[index - 1]
+                for previousIndex = 1, #previousPlaces do
+                    local total = bestCost[index - 1][previousIndex] + leg(previousPlaces[previousIndex], places[placeIndex])
+                    if total < best then best, fromIndex = total, previousIndex end
+                end
+            end
+            bestCost[index][placeIndex] = best
+            cameFrom[index][placeIndex] = fromIndex
+        end
+    end
+
+    local last = #chain
+    local chosen, chosenCost = 1, bestCost[last][1] or huge
+    for placeIndex = 2, #options[last] do
+        local total = bestCost[last][placeIndex]
+        if total < chosenCost then chosen, chosenCost = placeIndex, total end
+    end
+    if chosenCost >= current then return false end
+
+    local changed = false
+    for index = last, 1, -1 do
+        local place = options[index][chosen]
+        local stop = chain[index]
+        if place and (stop.areaId ~= place.areaId or stop.x ~= place.x or stop.y ~= place.y) then
+            stop.areaId = place.areaId
+            stop.x = place.x
+            stop.y = place.y
+            changed = true
+        end
+        chosen = cameFrom[index][chosen]
+    end
+    return changed
+end
+
 function ns.QuestView(rows)
     if ns.dbOpen == nil and ns.OpenDatabase then ns.OpenDatabase() end
     local dbReady = ns.DBReady and ns.DBReady()
@@ -1361,15 +1454,22 @@ function ns.ScheduleTour(plan, player, pinKey)
         return
     end
 
-    local ids = {}
-    for index, stop in ipairs(steps) do ids[stop] = index end
     local cache = {}
     -- Past this, new pairs are treated as unreachable so a huge log still returns
-    -- the best complete tour found so far instead of running on.
+    -- the best complete tour found so far instead of running on. The cap is the
+    -- asks of one pass. A second pass, after a camp moves, gets its own cap and
+    -- reuses pairs whose coordinates did not change.
     local ASK_CAP = 5000
     local asked = 0
+    local function spotKey(spot)
+        if type(spot) ~= "table" then return "player" end
+        local area = type(spot.areaId) == "number" and spot.areaId or 0
+        local x = type(spot.x) == "number" and spot.x or 0
+        local y = type(spot.y) == "number" and spot.y or 0
+        return string.format("%d:%.3f:%.3f", area, x, y)
+    end
     local function yieldingCost(fromStop, toStop)
-        local key = (fromStop and ids[fromStop] or 0) .. ":" .. (ids[toStop] or 0)
+        local key = spotKey(fromStop) .. ">" .. spotKey(toStop)
         local cached = cache[key]
         if cached == nil then
             if asked >= ASK_CAP then
@@ -1399,6 +1499,15 @@ function ns.ScheduleTour(plan, player, pinKey)
             ordered = ns.OrderStops(steps, nil, player, yieldingCost, pinKey, true)
         end
         if type(ordered) ~= "table" then ordered = steps end
+        asked = 0
+        local moved = ns.ChoosePlaces(ordered, player, yieldingCost, pinKey)
+        if moved and mappable >= 2 then
+            asked = 0
+            local again = ns.OrderStops(ordered, nil, player, yieldingCost, pinKey, true)
+            if type(again) == "table" then ordered = again end
+            asked = 0
+            ns.ChoosePlaces(ordered, player, yieldingCost, pinKey)
+        end
         ns.StampTravel(ordered, player, yieldingCost)
         return ordered
     end)

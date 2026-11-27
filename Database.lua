@@ -380,6 +380,163 @@ local function bestWaypoint(db, ids, player, preferArea)
     return best
 end
 
+-- Points this close on the zone map belong to one camp. A gap of 6 splits the
+-- two Ice Thistle herds in Winterspring; 8 joins them into one band.
+local CAMP_GAP = 6
+local CAMP_MEAN = 6
+
+local function spawnPoints(db, ids, idLimit, pointLimit)
+    local points = {}
+    if type(ids) ~= "table" then return points end
+    local seen = 0
+    for _, id in ipairs(ids) do
+        if type(id) == "number" and id > 0 then
+            seen = seen + 1
+            if idLimit and seen > idLimit then break end
+            local spawns = entitySpawns(db, id)
+            if type(spawns) == "table" then
+                local name = entityName(db, id)
+                local zones = {}
+                for areaId in pairs(spawns) do
+                    if type(areaId) == "number" then zones[#zones + 1] = areaId end
+                end
+                table.sort(zones)
+                for _, areaId in ipairs(zones) do
+                    local list = spawns[areaId]
+                    if type(list) == "table" then
+                        for _, coord in ipairs(list) do
+                            if type(coord) == "table" and type(coord[1]) == "number" and type(coord[2]) == "number"
+                                and coord[1] >= 0 and coord[2] >= 0 then
+                                points[#points + 1] = {
+                                    areaId = areaId,
+                                    x = coord[1],
+                                    y = coord[2],
+                                    name = name,
+                                }
+                                if pointLimit and #points >= pointLimit then return points end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return points
+end
+
+local function chosenPoint(points, player, preferArea)
+    local best, winner
+    for _, point in ipairs(points) do
+        local scored = considerPoint(best, point.areaId, point.x, point.y, player, preferArea)
+        if scored ~= best then
+            best, winner = scored, point
+        end
+    end
+    if not best or not winner then return nil end
+    best.name = winner.name
+    best.score = nil
+    return best
+end
+
+local function meanPoint(points)
+    local sx, sy, names, bestName, bestCount = 0, 0, {}, nil, nil
+    for _, point in ipairs(points) do
+        sx = sx + point.x
+        sy = sy + point.y
+        if type(point.name) == "string" and point.name ~= "" then
+            names[point.name] = (names[point.name] or 0) + 1
+            if not bestCount or names[point.name] > bestCount then
+                bestName, bestCount = point.name, names[point.name]
+            end
+        end
+    end
+    return {
+        areaId = points[1].areaId,
+        x = sx / #points,
+        y = sy / #points,
+        name = bestName,
+    }
+end
+
+-- One place per camp. Camps are split by zone, then by a gap on that zone's
+-- map. Six or more points use their mean. A smaller camp keeps the old rule:
+-- nearest point in the player's zone, otherwise the first listed point, with
+-- the quest zone ahead of any other zone.
+function ns.CampPlaces(points, player, preferArea)
+    if type(points) ~= "table" or points[1] == nil then return nil end
+    local byZone, zoneOrder = {}, {}
+    for index, point in ipairs(points) do
+        if type(point) == "table" and type(point.areaId) == "number" then
+            local bucket = byZone[point.areaId]
+            if not bucket then
+                bucket = {}
+                byZone[point.areaId] = bucket
+                zoneOrder[#zoneOrder + 1] = point.areaId
+            end
+            bucket[#bucket + 1] = { point = point, index = index }
+        end
+    end
+    local gap2 = CAMP_GAP * CAMP_GAP
+    local places = {}
+    for _, zone in ipairs(zoneOrder) do
+        local bucket = byZone[zone]
+        local parent = {}
+        for index = 1, #bucket do parent[index] = index end
+        local function find(index)
+            while parent[index] ~= index do
+                parent[index] = parent[parent[index]]
+                index = parent[index]
+            end
+            return index
+        end
+        for left = 1, #bucket do
+            local a = bucket[left].point
+            for right = left + 1, #bucket do
+                local b = bucket[right].point
+                local dx, dy = a.x - b.x, a.y - b.y
+                if dx * dx + dy * dy <= gap2 then
+                    local ra, rb = find(left), find(right)
+                    if ra ~= rb then parent[rb] = ra end
+                end
+            end
+        end
+        local groups, order = {}, {}
+        for index = 1, #bucket do
+            local root = find(index)
+            local group = groups[root]
+            if not group then
+                group = {}
+                groups[root] = group
+                order[#order + 1] = group
+            end
+            group[#group + 1] = bucket[index]
+        end
+        table.sort(order, function(a, b) return a[1].index < b[1].index end)
+        for _, group in ipairs(order) do
+            local members = {}
+            for _, entry in ipairs(group) do members[#members + 1] = entry.point end
+            local place = #members >= CAMP_MEAN and meanPoint(members) or chosenPoint(members, player, preferArea)
+            if place then places[#places + 1] = place end
+        end
+    end
+    if places[1] == nil then return nil end
+    return places
+end
+
+local function withPlaces(places, player, preferArea)
+    if type(places) ~= "table" or places[1] == nil then return nil end
+    local active = chosenPoint(places, player, preferArea)
+    if not active then return nil end
+    if #places > 1 then active.places = places end
+    return active
+end
+
+local function campedPoint(db, ids, player, preferArea)
+    local points = spawnPoints(db, ids, 64, 500)
+    if points[1] == nil then return nil end
+    return withPlaces(ns.CampPlaces(points, player, preferArea), player, preferArea)
+end
+
 local function bestOfIds(db, ids, player, preferArea, limit)
     local best
     if type(ids) ~= "table" then return nil end
@@ -440,25 +597,21 @@ function ns.AverageDropRate(itemId)
     return sum / count
 end
 
-local function inArea(point, areaId)
-    return type(point) == "table" and type(areaId) == "number" and areaId > 0 and point.areaId == areaId
-end
-
--- The collect step stays the item. This is only where to go: mobs when the
--- item drops, object spawns when it is picked up. A source in the quest zone
--- wins over a nearer source of the other kind, so a passing mob does not
--- replace the chest the quest is about.
+-- The collect step stays the item. Every camp of drop mobs and every camp of
+-- pickup objects is a candidate. Chests are listed first, so a tie still
+-- prefers the object over a mob.
 local function itemPoint(itemId, player, preferArea)
     if type(itemId) ~= "number" or itemId == 0 then return nil end
-    local npcPoint = bestOfIds(NpcDB, idList("npcDrops", itemId), player, preferArea, 12)
-    local objectPoint = bestOfIds(ObjectDB, idList("objectDrops", itemId), player, preferArea, 8)
-    if objectPoint and not npcPoint then return objectPoint end
-    if npcPoint and not objectPoint then return npcPoint end
-    if not objectPoint or not npcPoint then return nil end
-    local objectHome, npcHome = inArea(objectPoint, preferArea), inArea(npcPoint, preferArea)
-    if objectHome ~= npcHome then return objectHome and objectPoint or npcPoint end
-    if objectPoint.score == npcPoint.score then return objectPoint end
-    return objectPoint.score < npcPoint.score and objectPoint or npcPoint
+    local places = {}
+    local function add(db, field)
+        local camps = ns.CampPlaces(spawnPoints(db, idList(field, itemId), 64, 500), player, preferArea)
+        if camps then
+            for _, place in ipairs(camps) do places[#places + 1] = place end
+        end
+    end
+    add(ObjectDB, "objectDrops")
+    add(NpcDB, "npcDrops")
+    return withPlaces(places, player, preferArea)
 end
 
 local function norm(text)
@@ -808,6 +961,7 @@ function ns.CollectStops(questId, spec)
             sourceName = sourceName,
             icon = icon or "event",
             itemId = type(itemId) == "number" and itemId > 0 and itemId or nil,
+            places = point and point.places,
             unmatched = line == nil,
         }
         applyProgress(stop, line)
@@ -822,9 +976,12 @@ function ns.CollectStops(questId, spec)
                 if type(entry) == "table" then
                     local ids = entry[idIndex]
                     if type(ids) ~= "table" then ids = { ids } end
-                    local point = bestOfIds(NpcDB, ids, player, prefer, 8)
+                    local icon = creatureIcon(entry, iconIndex, ids)
+                    -- A talk step is one NPC. Farm steps use every camp.
+                    local point = icon == "talk" and bestOfIds(NpcDB, ids, player, prefer, 8)
+                        or campedPoint(NpcDB, ids, player, prefer)
                     local text = objectiveText(entry, textIndex, point and point.name or "Enemy")
-                    pushObjective(text, point, point and point.name, creatureIcon(entry, iconIndex, ids))
+                    pushObjective(text, point, point and point.name, icon)
                 end
             end
         end
@@ -833,7 +990,7 @@ function ns.CollectStops(questId, spec)
         if type(objectives[2]) == "table" then
             for _, entry in ipairs(objectives[2]) do
                 if type(entry) == "table" then
-                    local point = bestOfIds(ObjectDB, { entry[1] }, player, prefer, 4)
+                    local point = campedPoint(ObjectDB, { entry[1] }, player, prefer)
                     local text = objectiveText(entry, 2, point and point.name or "Object")
                     pushObjective(text, point, point and point.name, namedIcon(entry[3]) or "object")
                 end
